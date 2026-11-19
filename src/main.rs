@@ -17,11 +17,16 @@ mod landing;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod net;
+#[cfg(target_os = "macos")]
+mod nowplaying;
+#[cfg(target_os = "macos")]
+mod tray_macos;
 mod palette;
 mod player;
 mod secret;
 #[cfg_attr(windows, path = "sys/windows.rs")]
 #[cfg_attr(target_os = "linux", path = "sys/linux.rs")]
+#[cfg_attr(target_os = "macos", path = "sys/macos.rs")]
 mod sys;
 mod tags;
 #[cfg(windows)]
@@ -30,6 +35,7 @@ mod update;
 mod yandex_id;
 
 fn main() -> Result<(), slint::PlatformError> {
+    install_panic_log();
     #[cfg(target_os = "linux")]
     sys::audio_identity();
     // После обновления старая версия ещё закрывается: ждём её до 15 секунд.
@@ -50,7 +56,15 @@ fn main() -> Result<(), slint::PlatformError> {
     // Skia без видеокарты: память не зависит от драйвера (с OpenGL или D3D окно занимает
     // в 2–3 раза больше). Режим работы («Плавный» или «Лёгкий») меняет только анимации
     // и кэши и переключается на лету (gui::apply_mode).
-    slint::BackendSelector::new().backend_name("winit".into()).renderer_name("skia-software".into()).select()?;
+    let backend = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("skia-software".into());
+    // macOS: рамка системная, заголовок прозрачный, контент заходит под него — так видны
+    // родной «светофор» и тень окна, а свои кнопки в ui/app.slint на macOS не рисуются.
+    #[cfg(target_os = "macos")]
+    let backend = backend.with_winit_window_attributes_hook(|a| {
+        use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
+        a.with_titlebar_transparent(true).with_title_hidden(true).with_fullsize_content_view(true)
+    });
+    backend.select()?;
     // По app_id (Wayland) и WM_CLASS (X11) окружение находит .desktop и значок.
     #[cfg(target_os = "linux")]
     slint::set_xdg_app_id("yamusic-rs")?;
@@ -59,4 +73,15 @@ fn main() -> Result<(), slint::PlatformError> {
     // Без трея на Linux спрятанное окно было бы не вернуть.
     let start_hidden = cfg!(windows) && std::env::args().any(|a| a == "--tray");
     gui::run(start_hidden)
+}
+
+/// Паника с `panic = "abort"` убивает процесс молча: запущенное из Finder приложение
+/// не показывает ни консоли, ни отчёта. Пишем сообщение в журнал, потом отдаём ход
+/// обычному обработчику (он печатает в stderr, если он есть).
+fn install_panic_log() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        config::log(format!("паника: {info}"));
+        default(info);
+    }));
 }

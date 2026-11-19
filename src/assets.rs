@@ -15,12 +15,65 @@ pub struct Asar {
 }
 
 /// Официального клиента под Linux нет, там ассеты только с сайта.
+#[cfg(not(any(windows, target_os = "macos")))]
 fn asar_path() -> Option<PathBuf> {
-    if cfg!(not(windows)) {
-        return None;
-    }
+    None
+}
+
+#[cfg(windows)]
+fn asar_path() -> Option<PathBuf> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     Some(PathBuf::from(local).join("Programs").join("YandexMusic").join("resources").join("app.asar"))
+}
+
+/// На macOS официальный клиент называется «Yandex Music.app» (иногда по-русски) и лежит
+/// в /Applications или ~/Applications. Сначала быстрый перебор по имени, затем Spotlight
+/// по bundle id: приложение могло оказаться в любой папке и под любым именем. Ответ
+/// запоминаем — mdfind это внешний процесс, а архив открывают несколько модулей.
+#[cfg(target_os = "macos")]
+fn asar_path() -> Option<PathBuf> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| asar_by_name().or_else(asar_by_bundle_id)).clone()
+}
+
+#[cfg(target_os = "macos")]
+fn app_asar(app: &std::path::Path) -> Option<PathBuf> {
+    Some(app.join("Contents").join("Resources").join("app.asar")).filter(|p| p.is_file())
+}
+
+/// Первый `.app` из папок `dirs`, похожий по имени на Яндекс Музыку.
+#[cfg(target_os = "macos")]
+fn find_bundle(dirs: &[PathBuf]) -> Option<PathBuf> {
+    dirs.iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            name.ends_with(".app")
+                && ((name.contains("yandex") && name.contains("music"))
+                    || (name.contains("яндекс") && name.contains("музык")))
+        })
+        .find_map(|p| app_asar(&p))
+}
+
+#[cfg(target_os = "macos")]
+fn asar_by_name() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Applications"));
+    let dirs: Vec<PathBuf> = std::iter::once(PathBuf::from("/Applications")).chain(home).collect();
+    find_bundle(&dirs)
+}
+
+/// Spotlight может быть выключен или ещё не проиндексировать диск — тогда просто ничего.
+#[cfg(target_os = "macos")]
+fn asar_by_bundle_id() -> Option<PathBuf> {
+    let out = std::process::Command::new("mdfind")
+        .arg("kMDItemCFBundleIdentifier == 'ru.yandex.desktop.music'")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| app_asar(std::path::Path::new(l.trim())))
 }
 
 impl Asar {
@@ -299,5 +352,69 @@ mod tests {
         let s = Sprite::load(&mut a).unwrap();
         let svg = s.svg("addToPlaylist_xxs", &HashMap::new()).unwrap();
         assert!(svg.contains("<clipPath"));
+    }
+
+    /// Официальный клиент на macOS — это `.app` в /Applications; имя зависит от версии
+    /// и языка системы, поэтому ищем по словам, а не по точному имени.
+    #[cfg(target_os = "macos")]
+    fn fake_bundle(dir: &std::path::Path, name: &str, with_asar: bool) -> PathBuf {
+        let app = dir.join(name);
+        let res = app.join("Contents").join("Resources");
+        std::fs::create_dir_all(&res).unwrap();
+        if with_asar {
+            std::fs::write(res.join("app.asar"), b"asar").unwrap();
+        }
+        app
+    }
+
+    #[cfg(target_os = "macos")]
+    struct Dir(PathBuf);
+
+    #[cfg(target_os = "macos")]
+    impl Dir {
+        fn new(tag: &str) -> Dir {
+            let p = std::env::temp_dir().join(format!("ym-assets-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Dir(p)
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finds_english_bundle_by_name() {
+        let dir = Dir::new("en");
+        let app = fake_bundle(&dir.0, "Yandex Music.app", true);
+        assert_eq!(find_bundle(std::slice::from_ref(&dir.0)), Some(app.join("Contents/Resources/app.asar")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finds_russian_bundle_by_name() {
+        let dir = Dir::new("ru");
+        let app = fake_bundle(&dir.0, "Яндекс Музыка.app", true);
+        assert_eq!(find_bundle(std::slice::from_ref(&dir.0)), Some(app.join("Contents/Resources/app.asar")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ignores_other_apps_and_bundles_without_asar() {
+        let dir = Dir::new("skip");
+        fake_bundle(&dir.0, "Spotify.app", true);
+        fake_bundle(&dir.0, "Yandex Music.app", false);
+        assert_eq!(find_bundle(std::slice::from_ref(&dir.0)), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn missing_application_folder_is_not_an_error() {
+        assert_eq!(find_bundle(&[PathBuf::from("/nonexistent/Applications")]), None);
     }
 }

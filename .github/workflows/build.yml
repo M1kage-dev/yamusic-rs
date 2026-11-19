@@ -97,9 +97,57 @@ jobs:
           path: ${{ steps.pkg.outputs.rpm }}
           archive: false
 
+  # macOS: две архитектуры одним универсальным бинарём. Тесты и clippy — один раз,
+  # сборка и упаковка — через tools/macos-app.sh, он же собирает universal через lipo.
+  # macos-latest — всегда доступная метка Apple Silicon; конкретную версию (macos-14)
+  # GitHub снимает с раннеров, и job отменяется, не начавшись.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Тег совпадает с версией в Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Тег $GITHUB_REF_NAME, а в Cargo.toml версия $v"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      # Значок рендерится из SVG: без librsvg скрипт соберёт его из готового 256 px.
+      - name: librsvg для значка
+        run: brew install librsvg
+
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - run: cargo test --release
+
+      - name: Бандл и .dmg
+        run: tools/macos-app.sh --universal --dmg
+
+      - name: Проверка подписи и архитектур
+        run: |
+          codesign --verify --deep --strict "target/macos/Яндекс Музыка RS.app"
+          echo "архитектуры: $(lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs")"
+          lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs" | grep -q x86_64
+
+      - name: SHA-256
+        run: shasum -a 256 target/macos/*.dmg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: target/macos/yamusic-rs-*-macos.dmg
+          archive: false
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
