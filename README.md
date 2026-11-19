@@ -63,8 +63,8 @@ Intel не собирался и не проверялся.
 
 ## Установка
 
-Релизов пока нет: на каждый push CI собирает универсальный `.dmg` артефактом сборки,
-а тег `v*` создаёт релиз с ним. Собрать самому — один шаг:
+Готовый `.dmg` — в [релизах](https://github.com/M1kage-dev/yamusic-rs/releases/latest)
+(универсальный: Apple Silicon и Intel, SHA-256 в описании релиза). Собрать самому — один шаг:
 
 ```bash
 git clone https://github.com/M1kage-dev/yamusic-rs
