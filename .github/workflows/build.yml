@@ -99,8 +99,10 @@ jobs:
 
   # macOS: две архитектуры одним универсальным бинарём. Тесты и clippy — один раз,
   # сборка и упаковка — через tools/macos-app.sh, он же собирает universal через lipo.
+  # macos-latest — всегда доступная метка Apple Silicon; конкретную версию (macos-14)
+  # GitHub снимает с раннеров, и job отменяется, не начавшись.
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
 
