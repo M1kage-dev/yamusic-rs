@@ -19,6 +19,8 @@ mod mpris;
 mod net;
 #[cfg(target_os = "macos")]
 mod nowplaying;
+#[cfg(target_os = "macos")]
+mod tray_macos;
 mod palette;
 mod player;
 mod secret;

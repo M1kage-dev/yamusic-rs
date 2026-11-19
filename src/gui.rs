@@ -1835,6 +1835,8 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             let _ = weak.upgrade_in_event_loop(|ui| reveal(&ui));
         });
         install_media_keys(&ui, &player);
+        #[cfg(target_os = "macos")]
+        install_tray(&ui, &player);
     }
 
     ui.window().on_winit_window_event(|_, ev| {
@@ -1870,7 +1872,13 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     });
 
     let tick = Timer::default();
-    tick.start(TimerMode::Repeated, Duration::from_millis(250), || with_ctx(|c| c.sync_player()));
+    tick.start(TimerMode::Repeated, Duration::from_millis(250), || {
+        with_ctx(|c| {
+            c.sync_player();
+            #[cfg(target_os = "macos")]
+            sync_tray(c);
+        })
+    });
     // Строки текста переключаются точнее, чем раз в 250 мс.
     let lyric_tick = Timer::default();
     lyric_tick.start(TimerMode::Repeated, Duration::from_millis(50), || {
@@ -1973,6 +1981,46 @@ fn install_media_keys(ui: &AppWindow, player: &Player) {
             }
         });
     });
+}
+
+/// Значок в строке меню: окно и плеер под рукой, когда приложение свёрнуто.
+#[cfg(target_os = "macos")]
+fn install_tray(ui: &AppWindow, player: &Player) {
+    let weak = ui.as_weak();
+    let p = player.clone();
+    // NSStatusItem создаём, когда NSApplication уже запущен: до первого окна AppKit не готов.
+    Timer::single_shot(Duration::from_millis(300), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let ui = ui.as_weak();
+        let p = p.clone();
+        crate::tray_macos::install(move |e| {
+            use crate::tray_macos::Event;
+            let (ui, p) = (ui.clone(), p.clone());
+            // Пункт выбран во время слежения AppKit за меню: работу отдаём циклу событий.
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui.upgrade() else { return };
+                match e {
+                    Event::Toggle => {
+                        if ui.window().is_minimized() {
+                            reveal(&ui);
+                        } else {
+                            ui.window().set_minimized(true);
+                        }
+                    }
+                    Event::PlayPause => ui.global::<App>().invoke_play_pause(),
+                    Event::Prev => p.send(Cmd::Prev),
+                    Event::Next => p.send(Cmd::Next),
+                    Event::Quit => quit(),
+                }
+            });
+        });
+    });
+}
+
+/// Заголовки трея: «Играть» или «Пауза», окно показано или свёрнуто.
+#[cfg(target_os = "macos")]
+fn sync_tray(c: &Ctx) {
+    crate::tray_macos::sync(c.player.state().playing, !c.ui().window().is_minimized());
 }
 
 /// «Как в системе»: переключить тему, если в настройках выбран этот режим.
