@@ -1476,6 +1476,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_check_updates(cfg.check_updates);
     app.set_allow_explicit(cfg.allow_explicit);
     app.set_linux(cfg!(target_os = "linux"));
+    app.set_mac(cfg!(target_os = "macos"));
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
     app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
@@ -1723,7 +1724,26 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         let app = ui.global::<App>();
         let w = ui.window();
         if !app.get_mini() {
-            normal.set(Some((w.position(), w.size(), w.is_maximized())));
+            // В нативном полноэкранном режиме окно занимает весь экран: такую геометрию
+            // запоминать нельзя, иначе после мини-плеера окно вернётся размером с экран.
+            let fullscreen = w.with_winit_window(|ww| ww.fullscreen().is_some()).unwrap_or(false);
+            #[cfg(target_os = "macos")]
+            if fullscreen {
+                w.with_winit_window(|ww| ww.set_fullscreen(None));
+                // AppKit перерисовывает «светофор» по завершении перехода: прячем чуть позже,
+                // иначе кнопки останутся поверх мини-плеера.
+                let weak = weak.clone();
+                Timer::single_shot(Duration::from_millis(400), move || {
+                    if let Some(ui) = weak.upgrade() {
+                        sys::set_window_buttons(ui.window(), false);
+                    }
+                });
+            }
+            #[cfg(target_os = "macos")]
+            if !fullscreen {
+                sys::set_window_buttons(w, false);
+            }
+            normal.set(if fullscreen { None } else { Some((w.position(), w.size(), w.is_maximized())) });
             app.set_mini(true);
             app.set_maximized(false);
             w.set_maximized(false);
@@ -1741,6 +1761,8 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         } else {
             mini_pos.set(Some(w.position()));
             app.set_mini(false);
+            #[cfg(target_os = "macos")]
+            sys::set_window_buttons(w, true);
             w.with_winit_window(|ww| ww.set_min_inner_size(Some(LogicalSize::new(960.0, 640.0))));
             match normal.take() {
                 Some((pos, size, max)) => {
@@ -1802,11 +1824,17 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     #[cfg(not(windows))]
     {
         app.on_close(quit);
+        // Красная кнопка «светофора» на macOS: то же, что своя кнопка «Закрыть».
+        #[cfg(target_os = "macos")]
+        ui.window().on_close_requested(|| {
+            quit();
+            slint::CloseRequestResponse::KeepWindowShown
+        });
         let weak = ui.as_weak();
         sys::on_wake(move || {
             let _ = weak.upgrade_in_event_loop(|ui| reveal(&ui));
         });
-        install_mpris(&ui, &player);
+        install_media_keys(&ui, &player);
     }
 
     ui.window().on_winit_window_event(|_, ev| {
@@ -1827,6 +1855,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             }
             WindowEvent::Moved(_) => {
                 after_move();
+                EventResult::Propagate
+            }
+            // Система сменила светлую/тёмную тему: winit сообщает об этом сам, опрос не нужен.
+            #[cfg(target_os = "macos")]
+            WindowEvent::ThemeChanged(theme) => {
+                let dark = *theme == winit::window::Theme::Dark;
+                // Из обработчика события нельзя трогать свойства Slint — прыгаем в цикл.
+                Timer::single_shot(Duration::ZERO, move || follow_system_theme(dark));
                 EventResult::Propagate
             }
             _ => EventResult::Propagate,
@@ -1889,7 +1925,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
 
 /// Медиаклавиши и плеер в панели Linux. Команды выполняются так же, как кнопки в окне.
 #[cfg(target_os = "linux")]
-fn install_mpris(ui: &AppWindow, player: &Player) {
+fn install_media_keys(ui: &AppWindow, player: &Player) {
     let weak = ui.as_weak();
     let p = player.clone();
     crate::mpris::spawn(player.clone(), move |e| {
@@ -1912,6 +1948,43 @@ fn install_mpris(ui: &AppWindow, player: &Player) {
                 Event::Quit => quit(),
             }
         });
+    });
+}
+
+/// Медиаклавиши, AirPods и Пункт управления macOS — та же логика, другой источник команд.
+#[cfg(target_os = "macos")]
+fn install_media_keys(ui: &AppWindow, player: &Player) {
+    let weak = ui.as_weak();
+    let p = player.clone();
+    crate::nowplaying::spawn(player.clone(), move |e| {
+        let p = p.clone();
+        let _ = weak.upgrade_in_event_loop(move |ui| {
+            use crate::nowplaying::Event;
+            let app = ui.global::<App>();
+            let s = p.state();
+            match e {
+                Event::PlayPause => app.invoke_play_pause(),
+                Event::Play if !s.playing => app.invoke_play_pause(),
+                Event::Pause if s.playing => app.invoke_play_pause(),
+                Event::Play | Event::Pause => {}
+                Event::Next => p.send(Cmd::Next),
+                Event::Prev => p.send(Cmd::Prev),
+                Event::Seek(sec) => p.send(Cmd::Seek(sec)),
+            }
+        });
+    });
+}
+
+/// «Как в системе»: переключить тему, если в настройках выбран этот режим.
+#[cfg(target_os = "macos")]
+fn follow_system_theme(dark: bool) {
+    with_ctx(|c| {
+        if c.st.borrow().cfg.theme != "system" || c.st.borrow().dark == dark {
+            return;
+        }
+        c.st.borrow_mut().dark = dark;
+        let ui = c.ui();
+        ui.global::<Theme>().set_dark(ui.global::<App>().get_page() == Page::Wave || dark);
     });
 }
 

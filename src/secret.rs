@@ -1,6 +1,7 @@
 //! Где хранить токен. Windows: шифрование DPAPI, расшифровать может только та же учётная
 //! запись на том же компьютере, в config.json лежит base64 шифротекста. Linux: связка ключей
-//! пользователя через Secret Service, в config.json только имя записи.
+//! пользователя через Secret Service, macOS: связка ключей Keychain. В обоих случаях
+//! в config.json только имя записи.
 
 #[cfg(windows)]
 use base64::Engine as _;
@@ -135,8 +136,72 @@ mod keyring {
     }
 }
 
+/// Связка ключей macOS (Keychain): общий пароль приложения с service `yamusic-rs`
+/// и account по имени секрета. Виден в «Связке ключей» по имени yamusic-rs.
+#[cfg(target_os = "macos")]
+mod keychain {
+    use crate::config::log;
+    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    const SERVICE: &str = "yamusic-rs";
+    /// errSecItemNotFound: записи просто нет (ещё не входили или уже вышли).
+    const NOT_FOUND: i32 = -25300;
+
+    /// Что уже лежит в связке: конфиг сохраняется на каждое изменение настроек, а запись
+    /// в Keychain у подписанной ad-hoc сборки может спросить пароль пользователя.
+    static STORED: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+    fn cached(f: impl FnOnce(&mut HashMap<String, String>)) {
+        f(STORED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new));
+    }
+
+    pub fn store(name: &str, secret: &str) -> bool {
+        let mut same = false;
+        cached(|m| same = m.get(name).is_some_and(|v| v == secret));
+        if same {
+            return true;
+        }
+        match set_generic_password(SERVICE, name, secret.as_bytes()) {
+            Ok(()) => {
+                cached(|m| {
+                    m.insert(name.into(), secret.into());
+                });
+                true
+            }
+            Err(e) => {
+                log(format!("связка ключей: {e}"));
+                false
+            }
+        }
+    }
+
+    pub fn load(name: &str) -> Option<String> {
+        let secret = match get_generic_password(SERVICE, name) {
+            Ok(bytes) => String::from_utf8(bytes).ok()?,
+            Err(e) if e.code() == NOT_FOUND => return None,
+            Err(e) => {
+                log(format!("связка ключей: {e}"));
+                return None;
+            }
+        };
+        cached(|m| {
+            m.insert(name.into(), secret.clone());
+        });
+        Some(secret)
+    }
+
+    pub fn remove(name: &str) {
+        cached(|m| {
+            m.remove(name);
+        });
+        let _ = delete_generic_password(SERVICE, name);
+    }
+}
+
 /// Префикс в config.json: секрет лежит в связке ключей, а не рядом.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const IN_KEYRING: &str = "keyring:";
 
 /// Спрятать секрет для хранения в конфиге. `name` различает секреты в связке ключей Linux,
@@ -151,6 +216,10 @@ pub fn seal(name: &str, plain: &str) -> Option<String> {
     {
         keyring::store(name, plain).then(|| format!("{IN_KEYRING}{name}"))
     }
+    #[cfg(target_os = "macos")]
+    {
+        keychain::store(name, plain).then(|| format!("{IN_KEYRING}{name}"))
+    }
 }
 
 /// Достать секрет из конфига; None — чужая учётная запись, нет записи или испорченные данные.
@@ -164,12 +233,18 @@ pub fn open(sealed: &str) -> Option<String> {
     {
         keyring::load(sealed.trim().strip_prefix(IN_KEYRING)?)
     }
+    #[cfg(target_os = "macos")]
+    {
+        keychain::load(sealed.trim().strip_prefix(IN_KEYRING)?)
+    }
 }
 
 /// Секрет больше не нужен (вышли из аккаунта). DPAPI ничего не хранит, связку ключей чистим.
 pub fn forget(name: &str) {
     #[cfg(target_os = "linux")]
     keyring::remove(name);
+    #[cfg(target_os = "macos")]
+    keychain::remove(name);
     #[cfg(windows)]
     let _ = name;
 }
@@ -182,5 +257,21 @@ mod tests {
         assert!(!s.contains("y0_secret"));
         assert_eq!(super::open(&s).as_deref(), Some("y0_secret"));
         assert_eq!(super::open("AAAA"), None);
+    }
+}
+
+/// Ходит в настоящую связку ключей пользователя, поэтому по умолчанию не запускается:
+/// `cargo test -- --ignored keychain`.
+#[cfg(all(test, target_os = "macos"))]
+mod keychain_tests {
+    #[test]
+    #[ignore = "пишет в настоящую связку ключей"]
+    fn roundtrip_through_keychain() {
+        let sealed = super::seal("test-token", "y0_secret").expect("секрет должен лечь в связку ключей");
+        assert!(sealed.starts_with("keyring:"), "в config.json попадает только имя записи: {sealed}");
+        assert!(!sealed.contains("y0_secret"));
+        assert_eq!(super::open(&sealed).as_deref(), Some("y0_secret"));
+        super::forget("test-token");
+        assert_eq!(super::open(&sealed), None, "после forget секрета в связке нет");
     }
 }

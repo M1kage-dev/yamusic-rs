@@ -114,6 +114,15 @@ pub fn cache_dir() -> PathBuf {
     return crate::sys::cache_base().join("yamusic-rs");
 }
 
+/// Что писать в `token_plain`: открытым текстом токен хранится только там, где связки ключей
+/// может не быть вовсе (Linux). На macOS и Windows секрет без связки не сохраняется.
+fn plaintext_fallback(allow: bool, token: &Option<String>, sealed: &Option<String>) -> Option<String> {
+    if !allow || sealed.is_some() {
+        return None;
+    }
+    token.clone()
+}
+
 impl Config {
     pub fn load() -> Self {
         let mut c: Config = std::fs::read_to_string(dir().join("config.json"))
@@ -141,13 +150,24 @@ impl Config {
         // Токен не прочитался (связка ключей заперта) — запись о нём не трогаем, иначе после
         // разблокировки входить придётся заново. Стирают её только forget_token и forget_refresh.
         if let Some(t) = &self.token {
-            disk.token_sealed = crate::secret::seal("token", t);
+            let sealed = crate::secret::seal("token", t);
+            #[cfg(target_os = "macos")]
+            if sealed.is_none() {
+                log("токен входа не сохранён: связка ключей недоступна — откройте её и войдите заново");
+            }
+            if sealed.is_some() {
+                disk.token_sealed = sealed;
+            }
         }
         if let Some(t) = &self.refresh_token {
-            disk.refresh_sealed = crate::secret::seal("refresh", t);
+            let sealed = crate::secret::seal("refresh", t);
+            if sealed.is_some() {
+                disk.refresh_sealed = sealed;
+            }
         }
-        // Спрятать некуда (Linux без связки ключей) — открытым текстом, в файле только для владельца.
-        disk.token_plain = if disk.token_sealed.is_none() { self.token.clone() } else { None };
+        // Linux без связки ключей хранит токен открытым текстом, в файле только для владельца.
+        // На macOS так нельзя: если Keychain отказал, остаётся прежняя запись, а не открытый токен.
+        disk.token_plain = plaintext_fallback(!cfg!(target_os = "macos"), &self.token, &disk.token_sealed);
         if let Ok(s) = serde_json::to_string_pretty(&disk) {
             let path = dir().join("config.json");
             let tmp = dir().join("config.json.tmp");
@@ -216,3 +236,37 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::plaintext_fallback;
+
+    fn some(v: &str) -> Option<String> {
+        Some(v.to_string())
+    }
+
+    /// Linux без связки ключей: секрет деть некуда, файл 0600.
+    #[test]
+    fn linux_without_keyring_keeps_plaintext() {
+        assert_eq!(plaintext_fallback(true, &some("t"), &None), some("t"));
+    }
+
+    /// Связка сработала — открытым текстом не пишем.
+    #[test]
+    fn keyring_result_is_not_duplicated_in_plaintext() {
+        assert_eq!(plaintext_fallback(true, &some("t"), &some("keyring:token")), None);
+        assert_eq!(plaintext_fallback(false, &some("t"), &some("keyring:token")), None);
+    }
+
+    /// macOS (и Windows): связка отказала — открытый токен в файл не попадает.
+    #[test]
+    fn macos_never_writes_plaintext() {
+        assert_eq!(plaintext_fallback(false, &some("t"), &None), None);
+    }
+
+    /// Нечего хранить — нечего и писать.
+    #[test]
+    fn no_token_no_plaintext() {
+        assert_eq!(plaintext_fallback(true, &None, &None), None);
+    }
+}

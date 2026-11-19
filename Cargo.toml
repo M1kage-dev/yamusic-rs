@@ -5,13 +5,15 @@ edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
 description = "Яндекс Музыка RS — неофициальный клиент Яндекс Музыки на Rust"
-repository = "https://github.com/SpolzerMod/yamusic-rs"
+repository = "https://github.com/M1kage-dev/yamusic-rs"
 
 [dependencies]
 skia-safe = { version = "0.153.3", default-features = false }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-011", "unstable-winit-030"] }
 rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+# macos-system-configuration: на macOS прокси и VPN задаются в системных настройках,
+# без этой возможности reqwest ходит мимо них напрямую.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "macos-system-configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"
@@ -41,6 +43,20 @@ features = [
   "Win32_UI_Shell_Common",
   "Win32_System_Com",
 ]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arboard = { version = "3.7", default-features = false }
+# Токен в связке ключей macOS (Keychain).
+security-framework = "3"
+# Значок, «светофор» мини-плеера и медиаклавиши. У winit своя копия стека objc2 (0.5),
+# поэтому в бинаре их две; NSView получаем через raw pointer, версия обёртки на это не влияет.
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSDictionary", "NSValue", "NSData", "NSObject"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSWindow", "NSScreen", "NSView", "NSResponder", "NSButton", "NSControl"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-media-player = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "MPRemoteCommandCenter", "MPRemoteCommand", "MPRemoteCommandEvent", "MPNowPlayingInfoCenter", "MPMediaItem", "MPMediaItemCollection", "MPMediaEntity"] }
+raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
