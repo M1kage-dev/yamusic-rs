@@ -156,7 +156,7 @@ pub fn apply(r: &Release) -> Result<(), String> {
 fn install_exe(r: &Release) -> Result<PathBuf, String> {
     let (url, size, sha) = r.exe.as_ref().ok_or("у релиза нет exe")?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let bytes = client()?
+    let bytes = http()?
         .get(url)
         .timeout(Duration::from_secs(600))
         .send()
