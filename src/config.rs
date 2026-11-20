@@ -171,13 +171,7 @@ impl Config {
         if let Ok(s) = serde_json::to_string_pretty(&disk) {
             let path = dir().join("config.json");
             let tmp = dir().join("config.json.tmp");
-            if std::fs::write(&tmp, s).is_ok() {
-                // Без DPAPI токен лежит открытым текстом: файл только для владельца.
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-                }
+            if write_private(&tmp, s.as_bytes()).is_ok() {
                 let _ = std::fs::rename(&tmp, &path);
             }
         }
@@ -195,6 +189,22 @@ impl Config {
         self.refresh_sealed = None;
         crate::secret::forget("refresh");
     }
+}
+
+/// На Linux без связки ключей токен лежит открытым текстом, поэтому файл сразу создаётся
+/// только для владельца, а не получает права после записи.
+fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+        // Права задаются только новому файлу, у оставшегося старого .tmp они бы не поменялись.
+        let _ = std::fs::remove_file(path);
+    }
+    o.open(path)?.write_all(data)
 }
 
 /// Ошибка вместе с причинами. reqwest сам пишет только «error sending request», а что
