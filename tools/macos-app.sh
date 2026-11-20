@@ -22,6 +22,11 @@ VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 # CFBundleShortVersionString по требованиям Apple — только цифры и точки: из «2.0.0+upstream.1.1.2»
 # в бандл и в имя файла идёт «2.0.0». Полная строка остаётся в Cargo.toml и в описании релиза.
 SHORT=$(printf '%s' "$VERSION" | cut -d'+' -f1)
+# В системном окне «О программе» macOS печатает «Version <Short> (<Build>)». Кладём в build
+# базу апстрима: получается «Version 1.0.2 (upstream 1.1.2)» вместо дубля номера.
+UPSTREAM=$(printf '%s' "$VERSION" | sed -n 's/.*+upstream\.//p')
+BUILD=${UPSTREAM:+upstream $UPSTREAM}
+BUILD=${BUILD:-$SHORT}
 OUT="target/macos"
 APP="$OUT/$APP_NAME.app"
 DMG="$OUT/$EXE-$SHORT-macos.dmg"
@@ -76,7 +81,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>app</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$SHORT</string>
-  <key>CFBundleVersion</key><string>$SHORT</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
