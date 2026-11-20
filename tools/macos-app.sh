@@ -139,11 +139,30 @@ fi
 # постоянный designated requirement (`identifier + certificate root`), и «Всегда разрешать»
 # работает годами. Есть сертификат — подписываем им, нет — ad-hoc.
 IDENTITY="${YM_SIGN_IDENTITY:-Yandex Music RS}"
+[ "${YM_VERBOSE:-0}" = "1" ] && set -x
+
+# codesign без GUI может зависнуть, ожидая доступа к ключу (в CI это выглядит как «шаг идёт
+# 45 минут»). Сторожевой таймер превращает зависание в понятную ошибку.
+sign_with() {
+  codesign --force --timestamp=none "$@" >/dev/null 2>&1 &
+  local pid=$! i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 90 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null
+    echo "codesign не ответил за 90 с — доступ к ключу не выдан" >&2
+    return 1
+  fi
+  wait "$pid"
+}
+
 SIGNED=0
 if [ -n "${YM_SIGN_KEYCHAIN:-}" ]; then
-  codesign --force --sign "$IDENTITY" --keychain "$YM_SIGN_KEYCHAIN" "$APP" >/dev/null 2>&1 && SIGNED=1
+  sign_with --sign "$IDENTITY" --keychain "$YM_SIGN_KEYCHAIN" "$APP" && SIGNED=1
 else
-  codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1 && SIGNED=1
+  sign_with --sign "$IDENTITY" "$APP" && SIGNED=1
 fi
 if [ "$SIGNED" -eq 1 ]; then
   echo "подпись: ${IDENTITY}"
