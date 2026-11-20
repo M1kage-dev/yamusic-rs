@@ -1,6 +1,6 @@
 [package]
 name = "yamusic-rs"
-version = "1.0.4+upstream.1.1.3"
+version = "1.0.5+upstream.1.1.3"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -47,8 +47,6 @@ features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 arboard = { version = "3.7", default-features = false }
-# Токен в связке ключей macOS (Keychain).
-security-framework = "3"
 # Значок, «светофор» мини-плеера и медиаклавиши. У winit своя копия стека objc2 (0.5),
 # поэтому в бинаре их две; NSView получаем через raw pointer, версия обёртки на это не влияет.
 objc2 = "0.6"

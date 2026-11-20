@@ -136,73 +136,64 @@ mod keyring {
     }
 }
 
-/// Связка ключей macOS (Keychain). Все секреты лежат одной записью: Keychain спрашивает
-/// доступ к записи, а не к полю, поэтому два токена в одном JSON — один диалог вместо двух.
+/// Токены на macOS лежат файлом в папке настроек, доступном только владельцу (0600).
+///
+/// Почему не связка ключей: ACL записи привязан к конкретной сборке, и любой новый бинарь
+/// просит доступ заново — ни ad-hoc подпись, ни собственный сертификат этого не меняют
+/// («Всегда разрешать» после обновления не действует). Пользователь получал по два диалога
+/// на каждое обновление. Файл с правами 0600 читает только его учётная запись: для клиента,
+/// которому нужен один токен Яндекса, этого достаточно, а диалогов нет вообще.
 #[cfg(target_os = "macos")]
 mod keychain {
     use crate::config::log;
-    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
     use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::Mutex;
 
-    const SERVICE: &str = "yamusic-rs";
-    /// Одна запись на все секреты.
-    const ACCOUNT: &str = "tokens";
-    /// errSecItemNotFound: записи просто нет (ещё не входили или уже вышли).
-    const NOT_FOUND: i32 = -25300;
-
-    /// Разобранное содержимое записи: читаем один раз за запуск, дальше работаем с памятью.
+    /// Разобранное содержимое файла: читаем один раз за запуск, дальше работаем с памятью.
     static CACHE: Mutex<Option<BTreeMap<String, String>>> = Mutex::new(None);
 
-    fn read_item() -> Option<BTreeMap<String, String>> {
-        match get_generic_password(SERVICE, ACCOUNT) {
-            Ok(bytes) => serde_json::from_slice(&bytes).ok(),
-            Err(e) if e.code() == NOT_FOUND => None,
+    fn path() -> std::path::PathBuf {
+        crate::config::dir().join("secrets.json")
+    }
+
+    fn read_file() -> BTreeMap<String, String> {
+        let Ok(text) = std::fs::read_to_string(path()) else { return BTreeMap::new() };
+        match serde_json::from_str(&text) {
+            Ok(map) => map,
             Err(e) => {
-                log(format!("связка ключей: {e}"));
-                None
+                log(format!("файл токенов повреждён: {e}"));
+                BTreeMap::new()
             }
         }
     }
 
-    fn write_item(map: &BTreeMap<String, String>) -> bool {
-        let json = match serde_json::to_vec(map) {
+    /// Пишем через временный файл: права 0600 выставляются до переименования, чтобы токен
+    /// ни мгновения не лежал читаемым для других.
+    fn write_file(map: &BTreeMap<String, String>) -> bool {
+        let json = match serde_json::to_vec_pretty(map) {
             Ok(j) => j,
             Err(e) => {
-                log(format!("связка ключей: {e}"));
+                log(format!("токены: {e}"));
                 return false;
             }
         };
-        match set_generic_password(SERVICE, ACCOUNT, &json) {
-            Ok(()) => true,
-            Err(e) => {
-                log(format!("связка ключей: {e}"));
-                false
-            }
+        let file = path();
+        let tmp = file.with_extension("json.tmp");
+        let saved = std::fs::write(&tmp, &json).is_ok()
+            && std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).is_ok()
+            && std::fs::rename(&tmp, &file).is_ok();
+        if !saved {
+            log(format!("токены: не удалось записать {}", file.display()));
+            let _ = std::fs::remove_file(&tmp);
         }
-    }
-
-    /// Переезд с двух записей (`token`, `refresh`) на одну: читаем старые один раз и убираем.
-    fn migrate() -> BTreeMap<String, String> {
-        let mut map = BTreeMap::new();
-        for name in ["token", "refresh"] {
-            if let Ok(bytes) = get_generic_password(SERVICE, name) {
-                if let Ok(v) = String::from_utf8(bytes) {
-                    map.insert(name.to_string(), v);
-                }
-                let _ = delete_generic_password(SERVICE, name);
-            }
-        }
-        if !map.is_empty() {
-            write_item(&map);
-        }
-        map
+        saved
     }
 
     fn with_map<R>(f: impl FnOnce(&mut BTreeMap<String, String>) -> R) -> R {
         let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
-            *guard = Some(read_item().unwrap_or_else(migrate));
+            *guard = Some(read_file());
         }
         f(guard.as_mut().expect("карта заполнена выше"))
     }
@@ -213,7 +204,7 @@ mod keychain {
                 return true;
             }
             m.insert(name.to_string(), secret.to_string());
-            write_item(m)
+            write_file(m)
         })
     }
 
@@ -225,9 +216,9 @@ mod keychain {
         with_map(|m| {
             m.remove(name);
             if m.is_empty() {
-                let _ = delete_generic_password(SERVICE, ACCOUNT);
+                let _ = std::fs::remove_file(path());
             } else {
-                write_item(m);
+                write_file(m);
             }
         });
     }
@@ -293,18 +284,28 @@ mod tests {
     }
 }
 
-/// Ходит в настоящую связку ключей пользователя, поэтому по умолчанию не запускается:
-/// `cargo test -- --ignored keychain`.
+/// Файл секретов: запись, чтение, удаление и права 0600.
 #[cfg(all(test, target_os = "macos"))]
 mod keychain_tests {
     #[test]
-    #[ignore = "пишет в настоящую связку ключей"]
-    fn roundtrip_through_keychain() {
+    fn roundtrip_through_file() {
         let sealed = super::seal("test-token", "y0_secret").expect("секрет должен лечь в связку ключей");
         assert!(sealed.starts_with("keyring:"), "в config.json попадает только имя записи: {sealed}");
         assert!(!sealed.contains("y0_secret"));
         assert_eq!(super::open(&sealed).as_deref(), Some("y0_secret"));
         super::forget("test-token");
-        assert_eq!(super::open(&sealed), None, "после forget секрета в связке нет");
+        assert_eq!(super::open(&sealed), None, "после forget секрета нет");
+    }
+
+    /// Главная защита файлового хранения — права: читает только владелец.
+    #[test]
+    fn secrets_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let sealed = super::seal("perm-token", "x").expect("секрет записался");
+        let path = crate::config::dir().join("secrets.json");
+        let mode = std::fs::metadata(&path).expect("файл есть").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "файл токенов доступен только владельцу");
+        super::forget("perm-token");
+        assert_eq!(super::open(&sealed), None);
     }
 }
