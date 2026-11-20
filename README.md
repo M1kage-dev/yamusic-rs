@@ -108,9 +108,8 @@ xattr -dr com.apple.quarantine "/Applications/Яндекс Музыка RS.app"
 - **Только русский интерфейс**: словари en/uz/kk лежат в официальном клиенте, которого для macOS
   нет. В веб-версии их тоже нет — проверено: 80 начальных чанков, только использования ключей,
   без самих словарей.
-- **Подпись не от Apple**: приложение подписано своим сертификатом, не нотаризовано. Скачанный
-  `.dmg` требует «Всё равно открыть» один раз; на обновления это не влияет — их ставит само
-  приложение.
+- **Подпись не от Apple**: сборка подписана ad-hoc и не нотаризована. Скачанный `.dmg` требует
+  «Всё равно открыть» один раз; на обновления это не влияет — их ставит само приложение.
 - **Intel** не проверялся.
 
 ## Сборка и проверки
@@ -188,6 +187,7 @@ open "target/macos/Яндекс Музыка RS.app"
 Verified on macOS 27.2.1 (Apple Silicon): the `.app` builds and launches, pages load, web fonts
 download, device-code login screen, `cargo test`, `clippy -D warnings`, Keychain roundtrip.
 Not verified yet: login from the UI, media keys on a playing track, autostart after reboot.
-No tray, no auto-update, Russian UI only, ad-hoc signature (macOS asks for the Keychain password
-once after each update), Intel untested. Requires Xcode Command Line Tools and Rust 1.92+.
-GPL-3.0.
+No tray, Russian UI only, ad-hoc signature, Intel untested. Updates are installed by the app
+itself: it downloads the `.dmg`, verifies SHA-256 and replaces the bundle after quitting. The
+Yandex token lives in `secrets.json` with `0600` permissions (the Keychain was asking for access
+after every build). Requires Xcode Command Line Tools and Rust 1.92+. GPL-3.0.
