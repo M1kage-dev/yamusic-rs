@@ -30,14 +30,36 @@ rm -rf "$4"
 /// Скачать и поставить обновление. Возвращается сразу после запуска замены: приложение
 /// должно закрыться, иначе скрипт будет ждать вечно.
 pub fn install(r: &Release) -> Result<(), String> {
-    let (url, size, sha) = r.dmg.as_ref().ok_or("у релиза нет .dmg")?;
     let app = crate::sys::bundle_path().ok_or("приложение запущено не из .app — обновите вручную")?;
     let parent = app.parent().ok_or("у .app нет папки")?;
     if !writable(parent) {
         return Err(format!("нет прав на запись в {}", parent.display()));
     }
-    let current_id = bundle_id(&app)?;
+    let (staged, tmp) = prepare(r)?;
+    if bundle_id(&staged)? != bundle_id(&app)? {
+        return Err("в образе другое приложение".into());
+    }
+    let script = tmp.join("swap.sh");
+    std::fs::write(&script, SWAP).map_err(|e| format!("скрипт замены: {e}"))?;
+    Command::new("/bin/sh")
+        .arg(&script)
+        .arg(std::process::id().to_string())
+        .arg(&app)
+        .arg(&staged)
+        .arg(&tmp)
+        .arg("3")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("замена не запустилась: {e}"))?;
+    Ok(())
+}
 
+/// Скачать образ и подготовить новый бандл: сверить SHA-256, смонтировать, скопировать
+/// и проверить подпись. Ничего установленного не трогает — этим занимается [`install`].
+pub fn prepare(r: &Release) -> Result<(PathBuf, PathBuf), String> {
+    let (url, size, sha) = r.dmg.as_ref().ok_or("у релиза нет .dmg")?;
     let tmp = crate::config::cache_dir().join("update");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("временная папка: {e}"))?;
@@ -64,31 +86,12 @@ pub fn install(r: &Release) -> Result<(), String> {
     attach(&dmg, &mnt)?;
     let staged = tmp.join("new.app");
     let result = (|| {
-        let inside = first_app(&mnt)?;
-        copy_dir(&inside, &staged)?;
-        if bundle_id(&staged)? != current_id {
-            return Err("в образе другое приложение".into());
-        }
+        copy_dir(&first_app(&mnt)?, &staged)?;
         signed(&staged)
     })();
     detach(&mnt);
     result?;
-
-    let script = tmp.join("swap.sh");
-    std::fs::write(&script, SWAP).map_err(|e| format!("скрипт замены: {e}"))?;
-    Command::new("/bin/sh")
-        .arg(&script)
-        .arg(std::process::id().to_string())
-        .arg(&app)
-        .arg(&staged)
-        .arg(&tmp)
-        .arg("3")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("замена не запустилась: {e}"))?;
-    Ok(())
+    Ok((staged, tmp))
 }
 
 /// Можно ли писать рядом с бандлом: проверяем пробным файлом, а не правами на глаз.
@@ -256,6 +259,38 @@ mod tests {
         let dir = Dir::new("probe");
         assert!(writable(&dir.0));
         assert!(std::fs::read_dir(&dir.0).unwrap().count() == 0);
+    }
+
+    /// Последний релиз с GitHub → `Release` с адресом `.dmg`.
+    fn latest_release() -> Option<Release> {
+        let api = env!("CARGO_PKG_REPOSITORY").replace("https://github.com/", "https://api.github.com/repos/");
+        let v: serde_json::Value = crate::update::http().ok()?.get(format!("{api}/releases/latest")).send().ok()?.json().ok()?;
+        let tag = v.get("tag_name")?.as_str()?.trim_start_matches('v').to_string();
+        let dmg = v.get("assets")?.as_array()?.iter().find_map(|a| {
+            let name = a.get("name")?.as_str()?;
+            if !(name.starts_with("yamusic-rs-") && name.ends_with("-macos.dmg")) {
+                return None;
+            }
+            Some((
+                a.get("browser_download_url")?.as_str()?.to_string(),
+                a.get("size")?.as_u64()?,
+                a.get("digest")?.as_str()?.strip_prefix("sha256:")?.to_string(),
+            ))
+        })?;
+        Some(Release { version: tag, page: String::new(), dmg: Some(dmg) })
+    }
+
+    /// Настоящий релиз: скачать, сверить, смонтировать, скопировать, проверить подпись.
+    /// Установленное приложение не трогает: `cargo test -- --ignored prepare_latest_release`.
+    #[test]
+    #[ignore = "ходит в сеть и монтирует образ"]
+    fn prepare_latest_release() {
+        let release = latest_release().expect("у последнего релиза есть .dmg с digest");
+        let (staged, tmp) = prepare(&release).expect("образ скачался, смонтировался и проверился");
+        assert!(staged.join("Contents/Info.plist").is_file(), "в образе есть Info.plist");
+        assert!(!bundle_id(&staged).expect("identifier").is_empty());
+        assert!(signed(&staged).is_ok(), "подпись нового бандла проверяется");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
