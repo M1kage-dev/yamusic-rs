@@ -169,8 +169,9 @@ jobs:
           YM_VERBOSE: "1"
         run: |
           # Связку могли залочить, пока шла сборка: перед подписью разблокируем ещё раз.
+          # set-keychain-settings здесь не звать: без пароля она уходит в GUI-запрос и в CI
+          # просто висит до таймаута шага.
           if [ -n "$YM_SIGN_KEYCHAIN" ]; then
-            security set-keychain-settings -lut 21600 "$YM_SIGN_KEYCHAIN"
             security unlock-keychain -p ci-sign "$YM_SIGN_KEYCHAIN"
           fi
           tools/macos-app.sh --universal --skip-build --dmg
