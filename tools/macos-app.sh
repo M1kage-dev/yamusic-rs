@@ -146,10 +146,15 @@ else
   codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1 && SIGNED=1
 fi
 if [ "$SIGNED" -eq 1 ]; then
-  echo "подпись: $IDENTITY"
+  echo "подпись: ${IDENTITY}"
+elif [ "${YM_SIGN_REQUIRED:-0}" = "1" ]; then
+  # Сертификат обещан (CI с секретом), но подписать не вышло: молча откатываться в ad-hoc
+  # нельзя — тогда обновления снова начнут спрашивать доступ к связке ключей.
+  echo "сертификат «${IDENTITY}» недоступен, а подпись им обязательна" >&2
+  exit 1
 else
   codesign --force --sign - "$APP" >/dev/null
-  echo "подпись: ad-hoc (сертификата «$IDENTITY» нет)"
+  echo "подпись: ad-hoc (сертификата «${IDENTITY}» нет)"
 fi
 codesign --verify --deep --strict "$APP"
 

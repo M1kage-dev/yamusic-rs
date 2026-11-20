@@ -151,11 +151,19 @@ jobs:
       - name: Бандл и .dmg
         env:
           YM_SIGN_KEYCHAIN: ${{ secrets.MACOS_SIGN_P12 != '' && format('{0}/sign.keychain', runner.temp) || '' }}
-        run: tools/macos-app.sh --universal --dmg
+          YM_SIGN_REQUIRED: ${{ secrets.MACOS_SIGN_P12 != '' && '1' || '0' }}
+        run: |
+          # Связку могли залочить, пока шла сборка: перед подписью разблокируем ещё раз.
+          if [ -n "$YM_SIGN_KEYCHAIN" ]; then
+            security set-keychain-settings -lut 21600 "$YM_SIGN_KEYCHAIN"
+            security unlock-keychain -p ci-sign "$YM_SIGN_KEYCHAIN"
+          fi
+          tools/macos-app.sh --universal --dmg
 
       - name: Проверка подписи и архитектур
         run: |
           codesign --verify --deep --strict "target/macos/Яндекс Музыка RS.app"
+          echo "подпись: $(codesign -dvv "target/macos/Яндекс Музыка RS.app" 2>&1 | grep -E 'Authority|Signature=' | tr '\n' ' ')"
           echo "архитектуры: $(lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs")"
           lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs" | grep -q x86_64
 
