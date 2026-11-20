@@ -55,6 +55,7 @@ impl Release {
 }
 
 /// Ассет релиза по имени: адрес, размер и SHA-256 из `digest`.
+#[cfg(any(windows, target_os = "macos"))]
 fn find_asset(assets: &[serde_json::Value], matches: impl Fn(&str) -> bool) -> Option<(String, u64, String)> {
     let a = assets.iter().find(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(&matches))?;
     let url = a.get("browser_download_url")?.as_str()?.to_string();
@@ -104,7 +105,8 @@ pub fn check() -> Result<Option<Release>, String> {
         return Ok(None);
     }
     // На Linux обновляемся со страницы релиза: пакет ставит система.
-    let assets = v.get("assets").and_then(|a| a.as_array()).filter(|_| cfg!(any(windows, target_os = "macos")));
+    #[cfg(any(windows, target_os = "macos"))]
+    let assets = v.get("assets").and_then(|a| a.as_array());
     #[cfg(windows)]
     let exe = assets.and_then(|assets| find_asset(assets, |n| n == ASSET));
     #[cfg(target_os = "macos")]
