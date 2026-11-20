@@ -407,7 +407,8 @@ export component SettingsPage inherits Rectangle {
             }
             SettingItem {
                 title: T.t("О приложении");
-                desc: App.app-name + " · " + T.t("Версия ") + App.version;
+                desc: App.app-name + " · " + T.t("Версия ") + App.version
+                    + (App.version-upstream == "" ? "" : " · upstream " + App.version-upstream);
                 clicked => { App.setting("about"); }
             }
         }

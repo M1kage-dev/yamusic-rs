@@ -1459,7 +1459,9 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     let tracks = Rc::new(VecModel::<TrackItem>::default());
     let app = ui.global::<App>();
     app.set_tracks(ModelRc::from(tracks.clone()));
-    app.set_version(env!("CARGO_PKG_VERSION").into());
+    let (version, upstream) = crate::update::split_version(env!("CARGO_PKG_VERSION"));
+    app.set_version(version.into());
+    app.set_version_upstream(upstream.unwrap_or_default().into());
     app.set_app_name(env!("APP_NAME").into());
     app.set_theme_mode(cfg.theme.clone().into());
     app.set_lang(cfg.lang.clone().into());

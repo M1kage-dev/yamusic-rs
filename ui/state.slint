@@ -162,6 +162,8 @@ export global App {
     in property <bool> can-back;
     in property <bool> can-forward;
     in property <string> version;
+    // База апстрима из метаданных версии («1.1.2» для 1.0.1+upstream.1.1.2); пусто, если её нет.
+    in property <string> version-upstream;
     in property <string> app-name;
     in property <[WheelEntry]> wheel;
     in property <bool> pinned;

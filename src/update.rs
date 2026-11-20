@@ -74,6 +74,17 @@ pub(crate) fn http() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Версия для интерфейса: «1.0.1+upstream.1.1.2» → («1.0.1», Some(«1.1.2»)).
+/// Метаданные semver — не версия сборки, в UI они только мешают; базу апстрима
+/// показываем отдельной подписью в «О программе».
+pub fn split_version(v: &str) -> (&str, Option<&str>) {
+    let v = v.trim().trim_start_matches('v');
+    match v.split_once('+') {
+        Some((base, meta)) => (base, meta.strip_prefix("upstream.")),
+        None => (v, None),
+    }
+}
+
 /// «v2.0.1» и «2.0.1+upstream.1.1.2» → (2, 0, 1). Порядок задаёт только числовая часть:
 /// `+upstream.A.B.C` — это метаданные (какой апстрим внутри), они на сравнение не влияют,
 /// поэтому каждый наш релиз обязан поднимать сам номер.
@@ -236,6 +247,14 @@ mod tests {
         assert_eq!(parse_version("v2.0.1+upstream.1.2.0"), Some((2, 0, 1)));
         assert!(parse_version("2.0.1+upstream.1.1.2") > parse_version("2.0.0+upstream.1.1.2"));
         assert_eq!(parse_version("2.0.0+upstream.1.1.2"), parse_version("2.0.0"));
+    }
+
+    /// В интерфейсе — только номер сборки, база апстрима отдельно.
+    #[test]
+    fn version_for_ui() {
+        assert_eq!(split_version("1.0.1+upstream.1.1.2"), ("1.0.1", Some("1.1.2")));
+        assert_eq!(split_version("v2.0.0"), ("2.0.0", None));
+        assert_eq!(split_version("1.1.2+other.3"), ("1.1.2", None));
     }
 
     #[cfg(windows)]
