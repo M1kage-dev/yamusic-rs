@@ -125,10 +125,32 @@ jobs:
       - name: librsvg для значка
         run: brew install librsvg
 
+      # Сертификат подписи: с ним личность приложения постоянна и связка ключей не спрашивает
+      # доступ к токену после каждого обновления. Секретов нет — соберём ad-hoc.
+      - name: Сертификат подписи
+        env:
+          SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+        run: |
+          if [ -z "$SIGN_P12" ]; then
+            echo "секрета с сертификатом нет — подпишу ad-hoc"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/sign.keychain"
+          echo "$SIGN_P12" | base64 -D > "$RUNNER_TEMP/sign.p12"
+          security create-keychain -p ci-sign "$KEYCHAIN"
+          security unlock-keychain -p ci-sign "$KEYCHAIN"
+          security import "$RUNNER_TEMP/sign.p12" -k "$KEYCHAIN" -P "$SIGN_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci-sign "$KEYCHAIN" > /dev/null
+          rm -f "$RUNNER_TEMP/sign.p12"
+
+
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
 
       - name: Бандл и .dmg
+        env:
+          YM_SIGN_KEYCHAIN: ${{ secrets.MACOS_SIGN_P12 != '' && format('{0}/sign.keychain', runner.temp) || '' }}
         run: tools/macos-app.sh --universal --dmg
 
       - name: Проверка подписи и архитектур

@@ -136,40 +136,45 @@ mod keyring {
     }
 }
 
-/// Связка ключей macOS (Keychain): общий пароль приложения с service `yamusic-rs`
-/// и account по имени секрета. Виден в «Связке ключей» по имени yamusic-rs.
+/// Связка ключей macOS (Keychain). Все секреты лежат одной записью: Keychain спрашивает
+/// доступ к записи, а не к полю, поэтому два токена в одном JSON — один диалог вместо двух.
 #[cfg(target_os = "macos")]
 mod keychain {
     use crate::config::log;
     use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
     const SERVICE: &str = "yamusic-rs";
+    /// Одна запись на все секреты.
+    const ACCOUNT: &str = "tokens";
     /// errSecItemNotFound: записи просто нет (ещё не входили или уже вышли).
     const NOT_FOUND: i32 = -25300;
 
-    /// Что уже лежит в связке: конфиг сохраняется на каждое изменение настроек, а запись
-    /// в Keychain у подписанной ad-hoc сборки может спросить пароль пользователя.
-    static STORED: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    /// Разобранное содержимое записи: читаем один раз за запуск, дальше работаем с памятью.
+    static CACHE: Mutex<Option<BTreeMap<String, String>>> = Mutex::new(None);
 
-    fn cached(f: impl FnOnce(&mut HashMap<String, String>)) {
-        f(STORED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new));
+    fn read_item() -> Option<BTreeMap<String, String>> {
+        match get_generic_password(SERVICE, ACCOUNT) {
+            Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+            Err(e) if e.code() == NOT_FOUND => None,
+            Err(e) => {
+                log(format!("связка ключей: {e}"));
+                None
+            }
+        }
     }
 
-    pub fn store(name: &str, secret: &str) -> bool {
-        let mut same = false;
-        cached(|m| same = m.get(name).is_some_and(|v| v == secret));
-        if same {
-            return true;
-        }
-        match set_generic_password(SERVICE, name, secret.as_bytes()) {
-            Ok(()) => {
-                cached(|m| {
-                    m.insert(name.into(), secret.into());
-                });
-                true
+    fn write_item(map: &BTreeMap<String, String>) -> bool {
+        let json = match serde_json::to_vec(map) {
+            Ok(j) => j,
+            Err(e) => {
+                log(format!("связка ключей: {e}"));
+                return false;
             }
+        };
+        match set_generic_password(SERVICE, ACCOUNT, &json) {
+            Ok(()) => true,
             Err(e) => {
                 log(format!("связка ключей: {e}"));
                 false
@@ -177,26 +182,54 @@ mod keychain {
         }
     }
 
-    pub fn load(name: &str) -> Option<String> {
-        let secret = match get_generic_password(SERVICE, name) {
-            Ok(bytes) => String::from_utf8(bytes).ok()?,
-            Err(e) if e.code() == NOT_FOUND => return None,
-            Err(e) => {
-                log(format!("связка ключей: {e}"));
-                return None;
+    /// Переезд с двух записей (`token`, `refresh`) на одну: читаем старые один раз и убираем.
+    fn migrate() -> BTreeMap<String, String> {
+        let mut map = BTreeMap::new();
+        for name in ["token", "refresh"] {
+            if let Ok(bytes) = get_generic_password(SERVICE, name) {
+                if let Ok(v) = String::from_utf8(bytes) {
+                    map.insert(name.to_string(), v);
+                }
+                let _ = delete_generic_password(SERVICE, name);
             }
-        };
-        cached(|m| {
-            m.insert(name.into(), secret.clone());
-        });
-        Some(secret)
+        }
+        if !map.is_empty() {
+            write_item(&map);
+        }
+        map
+    }
+
+    fn with_map<R>(f: impl FnOnce(&mut BTreeMap<String, String>) -> R) -> R {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = Some(read_item().unwrap_or_else(migrate));
+        }
+        f(guard.as_mut().expect("карта заполнена выше"))
+    }
+
+    pub fn store(name: &str, secret: &str) -> bool {
+        with_map(|m| {
+            if m.get(name).is_some_and(|v| v == secret) {
+                return true;
+            }
+            m.insert(name.to_string(), secret.to_string());
+            write_item(m)
+        })
+    }
+
+    pub fn load(name: &str) -> Option<String> {
+        with_map(|m| m.get(name).cloned())
     }
 
     pub fn remove(name: &str) {
-        cached(|m| {
+        with_map(|m| {
             m.remove(name);
+            if m.is_empty() {
+                let _ = delete_generic_password(SERVICE, ACCOUNT);
+            } else {
+                write_item(m);
+            }
         });
-        let _ = delete_generic_password(SERVICE, name);
     }
 }
 

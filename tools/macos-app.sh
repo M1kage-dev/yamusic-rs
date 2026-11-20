@@ -133,10 +133,24 @@ else
   echo "внимание: SVG не отрендерился, значок собран из готового 256 px" >&2
 fi
 
-# Без подписи macOS 15+ не запускает бинарь с Apple Silicon; ad-hoc достаточно.
-# Подпись меняется вместе с бинарём, поэтому после обновления Keychain один раз спросит
-# пароль за сохранённым токеном.
-codesign --force --sign - "$APP" >/dev/null
+# Подпись решает две разные задачи. Без неё macOS не запускает бинарь на Apple Silicon.
+# Ad-hoc годится для запуска, но личность приложения меняется с каждой сборкой — связка
+# ключей тогда спрашивает доступ к токену после каждого обновления. Свой сертификат даёт
+# постоянный designated requirement (`identifier + certificate root`), и «Всегда разрешать»
+# работает годами. Есть сертификат — подписываем им, нет — ad-hoc.
+IDENTITY="${YM_SIGN_IDENTITY:-Yandex Music RS}"
+SIGNED=0
+if [ -n "${YM_SIGN_KEYCHAIN:-}" ]; then
+  codesign --force --sign "$IDENTITY" --keychain "$YM_SIGN_KEYCHAIN" "$APP" >/dev/null 2>&1 && SIGNED=1
+else
+  codesign --force --sign "$IDENTITY" "$APP" >/dev/null 2>&1 && SIGNED=1
+fi
+if [ "$SIGNED" -eq 1 ]; then
+  echo "подпись: $IDENTITY"
+else
+  codesign --force --sign - "$APP" >/dev/null
+  echo "подпись: ad-hoc (сертификата «$IDENTITY» нет)"
+fi
 codesign --verify --deep --strict "$APP"
 
 if [ "$DMG_ON" -eq 1 ]; then
