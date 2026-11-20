@@ -152,13 +152,54 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
+      # Описание релиза — раздел из CHANGELOG.md. Нет раздела — релиз не собираем:
+      # так история изменений не отстаёт от тегов.
+      - name: Заметки из CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '
+            index($0, "## [" v "]") == 1 { hit = 1; next }
+            hit && index($0, "## [") == 1 { exit }
+            hit { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::В CHANGELOG.md нет раздела «## [$v]»"
+            exit 1
+          fi
+          {
+            echo "Версия \`$v\` — сборка macOS-форка. Установка и ограничения: README.md."
+            echo
+            cat notes.md
+          } > body.md
+
       - name: Релиз
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --notes-file body.md
+
+      # Контрольные суммы считаем уже по загруженным файлам: то, что видит пользователь.
+      - name: Контрольные суммы
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          {
+            echo
+            echo "## Контрольные суммы SHA-256"
+            echo
+            echo "| Файл | SHA-256 |"
+            echo "| --- | --- |"
+            for f in dist/*; do
+              echo "| \`$(basename "$f")\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
+          } > sums.md
+          cat body.md sums.md > full.md
+          gh release edit "$GITHUB_REF_NAME" --notes-file full.md

@@ -5,7 +5,9 @@
 //! его переименовать. Старый файл (`*.old.exe`) удаляется при следующем запуске.
 //! Если папка недоступна для записи, кнопка открывает страницу релиза. На Linux — всегда её.
 
+#[cfg(windows)]
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,6 +15,7 @@ use std::time::Duration;
 pub const POLL: Duration = Duration::from_secs(30 * 60);
 
 /// Имя exe в релизе.
+#[cfg(windows)]
 const ASSET: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 
 /// Проверка включена в настройках («Проверять обновления»).
@@ -31,11 +34,36 @@ pub struct Release {
     pub version: String,
     /// Страница релиза на GitHub.
     pub page: String,
-    /// Exe: адрес, размер и SHA-256. Нет — обновить можно только руками.
+    /// Windows: exe — адрес, размер и SHA-256. Нет — обновить можно только руками.
+    #[cfg(windows)]
     pub exe: Option<(String, u64, String)>,
+    /// macOS: .dmg с универсальным бандлом — адрес, размер и SHA-256.
+    #[cfg(target_os = "macos")]
+    pub dmg: Option<(String, u64, String)>,
 }
 
-fn client() -> Result<reqwest::blocking::Client, String> {
+impl Release {
+    /// Можно ли обновиться из приложения: на Windows нужен exe, на macOS — dmg.
+    pub fn can_install(&self) -> bool {
+        #[cfg(windows)]
+        return self.exe.is_some();
+        #[cfg(target_os = "macos")]
+        return self.dmg.is_some();
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return false;
+    }
+}
+
+/// Ассет релиза по имени: адрес, размер и SHA-256 из `digest`.
+fn find_asset(assets: &[serde_json::Value], matches: impl Fn(&str) -> bool) -> Option<(String, u64, String)> {
+    let a = assets.iter().find(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(&matches))?;
+    let url = a.get("browser_download_url")?.as_str()?.to_string();
+    let size = a.get("size")?.as_u64()?;
+    let sha = a.get("digest")?.as_str()?.strip_prefix("sha256:")?.to_ascii_lowercase();
+    Some((url, size, sha))
+}
+
+pub(crate) fn http() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         // GitHub API без User-Agent отвечает 403.
         .user_agent(concat!("yamusic-rs/", env!("CARGO_PKG_VERSION")))
@@ -45,16 +73,21 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// «v1.2.3» / «1.2.3» → (1, 2, 3). Пре-релизы (`/releases/latest` их и так не отдаёт) не нужны.
+/// «v2.0.1» и «2.0.1+upstream.1.1.2» → (2, 0, 1). Порядок задаёт только числовая часть:
+/// `+upstream.A.B.C` — это метаданные (какой апстрим внутри), они на сравнение не влияют,
+/// поэтому каждый наш релиз обязан поднимать сам номер.
 fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
-    let mut it = s.trim().trim_start_matches('v').split(['.', '-']).map(|p| p.parse::<u32>());
+    let s = s.trim().trim_start_matches('v');
+    // Хвост после «+» и после «-» (пре-релиз) на порядок не влияет.
+    let base = s.split(['+', '-']).next()?;
+    let mut it = base.split('.').map(|p| p.parse::<u32>());
     Some((it.next()?.ok()?, it.next()?.ok()?, it.next().unwrap_or(Ok(0)).ok()?))
 }
 
 /// Последний релиз, если он новее запущенной версии.
 pub fn check() -> Result<Option<Release>, String> {
     let api = env!("CARGO_PKG_REPOSITORY").replace("https://github.com/", "https://api.github.com/repos/");
-    let resp = client()?.get(format!("{api}/releases/latest")).send().map_err(|e| crate::config::chain(&e))?;
+    let resp = http()?.get(format!("{api}/releases/latest")).send().map_err(|e| crate::config::chain(&e))?;
     // 404 — релизов ещё нет.
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
@@ -70,15 +103,12 @@ pub fn check() -> Result<Option<Release>, String> {
     if latest <= current {
         return Ok(None);
     }
-    // На Linux exe не нужен: новый пакет ставится со страницы релиза.
-    let assets = v.get("assets").and_then(|a| a.as_array()).filter(|_| cfg!(windows));
-    let exe = assets.and_then(|assets| {
-        let a = assets.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(ASSET))?;
-        let url = a.get("browser_download_url")?.as_str()?.to_string();
-        let size = a.get("size")?.as_u64()?;
-        let sha = a.get("digest")?.as_str()?.strip_prefix("sha256:")?.to_ascii_lowercase();
-        Some((url, size, sha))
-    });
+    // На Linux обновляемся со страницы релиза: пакет ставит система.
+    let assets = v.get("assets").and_then(|a| a.as_array()).filter(|_| cfg!(any(windows, target_os = "macos")));
+    #[cfg(windows)]
+    let exe = assets.and_then(|assets| find_asset(assets, |n| n == ASSET));
+    #[cfg(target_os = "macos")]
+    let dmg = assets.and_then(|assets| find_asset(assets, |n| n.starts_with("yamusic-rs-") && n.ends_with("-macos.dmg")));
     Ok(Some(Release {
         version: tag.trim_start_matches('v').to_string(),
         // Страницу откроет браузер системы: адрес из ответа берём, только если это https.
@@ -87,17 +117,41 @@ pub fn check() -> Result<Option<Release>, String> {
             .and_then(|u| u.as_str())
             .and_then(crate::client::browser_url)
             .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string()),
+        #[cfg(windows)]
         exe,
+        #[cfg(target_os = "macos")]
+        dmg,
     }))
 }
 
+#[cfg(windows)]
 fn old_path(exe: &Path) -> PathBuf {
     exe.with_extension("old.exe")
 }
 
+/// Поставить обновление и перезапуститься. Windows подменяет exe, macOS — бандл `.app`
+/// (см. `update_macos`). Приложение закрывается сразу после успеха.
+pub fn apply(r: &Release) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let exe = install_exe(r)?;
+        relaunch(&exe)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::update_macos::install(r)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = r;
+        Err("обновление вручную: пакет ставит система".into())
+    }
+}
+
 /// Скачать новый exe, проверить и поставить на место запущенного. Долго: звать из фонового
 /// потока. После успеха нужно запустить [`relaunch`] и закрыться.
-pub fn install(r: &Release) -> Result<PathBuf, String> {
+#[cfg(windows)]
+fn install_exe(r: &Release) -> Result<PathBuf, String> {
     let (url, size, sha) = r.exe.as_ref().ok_or("у релиза нет exe")?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let bytes = client()?
@@ -130,7 +184,8 @@ pub fn install(r: &Release) -> Result<PathBuf, String> {
 }
 
 /// Запустить обновлённый exe. Он дождётся, пока этот процесс закроется.
-pub fn relaunch(exe: &Path) -> Result<(), String> {
+#[cfg(windows)]
+fn relaunch(exe: &Path) -> Result<(), String> {
     std::process::Command::new(exe)
         .arg(AFTER_UPDATE)
         .spawn()
@@ -139,21 +194,25 @@ pub fn relaunch(exe: &Path) -> Result<(), String> {
 }
 
 /// Убрать exe прошлой версии, оставшийся после обновления. Старый процесс может ещё
-/// завершаться и держать файл, поэтому пробуем несколько раз в фоне.
+/// завершаться и держать файл, поэтому пробуем несколько раз в фоне. На macOS прошлый
+/// бандл убирает скрипт замены, здесь делать нечего.
 pub fn cleanup() {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let old = old_path(&exe);
-    if !old.exists() {
-        return;
-    }
-    std::thread::spawn(move || {
-        for _ in 0..10 {
-            if std::fs::remove_file(&old).is_ok() || !old.exists() {
-                return;
-            }
-            std::thread::sleep(Duration::from_secs(2));
+    #[cfg(windows)]
+    {
+        let Ok(exe) = std::env::current_exe() else { return };
+        let old = old_path(&exe);
+        if !old.exists() {
+            return;
         }
-    });
+        std::thread::spawn(move || {
+            for _ in 0..10 {
+                if std::fs::remove_file(&old).is_ok() || !old.exists() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +227,16 @@ mod tests {
         assert_eq!(parse_version("latest"), None);
     }
 
+    /// Метаданные `+upstream.A.B.C` не участвуют в сравнении: порядок задаёт номер.
+    #[test]
+    fn upstream_metadata_is_ignored() {
+        assert_eq!(parse_version("2.0.0+upstream.1.1.2"), Some((2, 0, 0)));
+        assert_eq!(parse_version("v2.0.1+upstream.1.2.0"), Some((2, 0, 1)));
+        assert!(parse_version("2.0.1+upstream.1.1.2") > parse_version("2.0.0+upstream.1.1.2"));
+        assert_eq!(parse_version("2.0.0+upstream.1.1.2"), parse_version("2.0.0"));
+    }
+
+    #[cfg(windows)]
     #[test]
     fn paths() {
         assert_eq!(old_path(Path::new(r"C:\a\yamusic-rs.exe")), Path::new(r"C:\a\yamusic-rs.old.exe"));

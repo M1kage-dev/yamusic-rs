@@ -19,9 +19,12 @@ BUNDLE_ID=$(grep -m1 'const BUNDLE_ID' src/sys/macos.rs | cut -d'"' -f2)
 [ -n "$BUNDLE_ID" ] || { echo "не нашёл BUNDLE_ID в src/sys/macos.rs" >&2; exit 1; }
 EXE="yamusic-rs"
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+# CFBundleShortVersionString по требованиям Apple — только цифры и точки: из «2.0.0+upstream.1.1.2»
+# в бандл и в имя файла идёт «2.0.0». Полная строка остаётся в Cargo.toml и в описании релиза.
+SHORT=$(printf '%s' "$VERSION" | cut -d'+' -f1)
 OUT="target/macos"
 APP="$OUT/$APP_NAME.app"
-DMG="$OUT/$EXE-$VERSION-macos.dmg"
+DMG="$OUT/$EXE-$SHORT-macos.dmg"
 
 UNIVERSAL=0
 DMG_ON=0
@@ -72,8 +75,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>$EXE</string>
   <key>CFBundleIconFile</key><string>app</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$SHORT</string>
+  <key>CFBundleVersion</key><string>$SHORT</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>

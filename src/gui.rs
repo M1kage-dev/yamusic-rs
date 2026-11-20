@@ -1244,14 +1244,14 @@ fn start_updates(ui: &AppWindow) {
     });
     ui.global::<App>().on_update_install(|| {
         let Some(r) = UPDATE.with(|u| u.borrow().clone()) else { return };
-        // В релизе нет exe — обновить можно только руками, ведём на страницу.
-        if r.exe.is_none() {
+        // В релизе нет файла для этой платформы — обновить можно только руками, ведём на страницу.
+        if !r.can_install() {
             sys::open_url(&r.page);
             return;
         }
         with_ctx(|c| c.ui().global::<App>().set_update_busy(true));
         std::thread::spawn(move || {
-            let res = crate::update::install(&r).and_then(|exe| crate::update::relaunch(&exe));
+            let res = crate::update::apply(&r);
             let _ = slint::invoke_from_event_loop(move || match res {
                 // Новая версия ждёт, пока мы закроемся.
                 Ok(()) => quit(),

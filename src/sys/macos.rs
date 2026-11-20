@@ -212,6 +212,12 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
+/// `.app`, из которого запущено приложение. `None` — запущено не из бандла (`cargo run`,
+/// файл внутри `Contents/MacOS`): автообновление такому процессу не предлагаем.
+pub fn bundle_path() -> Option<PathBuf> {
+    bundle_of(&std::env::current_exe().ok()?)
+}
+
 /// `.app`, внутри которого лежит бинарь: у бандла запускать надо его, а не файл в
 /// Contents/MacOS — иначе теряются значок и активация.
 fn bundle_of(exe: &Path) -> Option<PathBuf> {

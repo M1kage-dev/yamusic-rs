@@ -1,6 +1,6 @@
 [package]
 name = "yamusic-rs"
-version = "1.1.2"
+version = "1.0.1+upstream.1.1.2"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -11,9 +11,10 @@ repository = "https://github.com/M1kage-dev/yamusic-rs"
 skia-safe = { version = "0.153.3", default-features = false }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-011", "unstable-winit-030"] }
 rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
-# macos-system-configuration: на macOS прокси и VPN задаются в системных настройках,
-# без этой возможности reqwest ходит мимо них напрямую.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "macos-system-configuration"] }
+# Системный прокси намеренно не используем (никакой macos-system-configuration): иначе
+# приложение ходит через любой запущенный отладочный прокси вроде Proxyman, зависит от него
+# и отправляет токен лишним хопом. VPN работает и так — он маршрутизирует на уровне сети.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"
