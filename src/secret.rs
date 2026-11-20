@@ -179,6 +179,10 @@ mod keychain {
             }
         };
         let file = path();
+        // Папки настроек может ещё не быть (первый запуск, чистый CI): создаём до записи.
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
         let tmp = file.with_extension("json.tmp");
         let saved = std::fs::write(&tmp, &json).is_ok()
             && std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).is_ok()
@@ -289,7 +293,7 @@ mod tests {
 mod keychain_tests {
     #[test]
     fn roundtrip_through_file() {
-        let sealed = super::seal("test-token", "y0_secret").expect("секрет должен лечь в связку ключей");
+        let sealed = super::seal("test-token", "y0_secret").expect("секрет должен лечь в файл");
         assert!(sealed.starts_with("keyring:"), "в config.json попадает только имя записи: {sealed}");
         assert!(!sealed.contains("y0_secret"));
         assert_eq!(super::open(&sealed).as_deref(), Some("y0_secret"));
