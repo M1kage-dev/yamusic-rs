@@ -41,12 +41,20 @@ pub struct Config {
     pub mode: String,
     /// Куда скачивать треки. Пусто — Музыка\Яндекс Музыка.
     pub download_dir: String,
+    /// Скачивать FLAC, если он есть у трека.
+    pub download_flac: bool,
     /// Блоки главной и «Книг и подкастов», которые скрыл пользователь.
     pub hidden_blocks: Vec<HiddenBlock>,
     /// Раз в полчаса спрашивать GitHub о новой версии.
     pub check_updates: bool,
     /// «Треки 18+» в меню профиля.
     pub allow_explicit: bool,
+    /// Обычное окно при выходе, в пикселях экрана. На Wayland места окна не узнать.
+    pub window_pos: Option<[i32; 2]>,
+    pub window_size: Option<[u32; 2]>,
+    pub window_maximized: bool,
+    /// Место мини-плеера при выходе.
+    pub mini_pos: Option<[i32; 2]>,
 }
 
 /// Блок запоминается по id из скелета: он постоянный («recommended_playlists»), а заголовок
@@ -79,9 +87,14 @@ impl Default for Config {
             navbar_collapsed: false,
             mode: "smooth".into(),
             download_dir: String::new(),
+            download_flac: false,
             hidden_blocks: Vec::new(),
             check_updates: true,
             allow_explicit: true,
+            window_pos: None,
+            window_size: None,
+            window_maximized: false,
+            mini_pos: None,
         }
     }
 }

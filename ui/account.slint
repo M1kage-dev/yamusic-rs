@@ -367,6 +367,13 @@ export component SettingsPage inherits Rectangle {
                 desc: App.download-dir;
                 clicked => { App.setting("download-dir"); }
             }
+            SettingItem {
+                title: T.t("Скачивать в FLAC");
+                desc: T.t("Без потерь, если у трека есть такая версия. Если нет, скачается MP3");
+                toggle: true;
+                on: App.download-flac;
+                clicked => { App.setting("download-flac"); }
+            }
             if App.hidden-blocks != "": SettingItem {
                 title: T.t("Вернуть скрытые блоки");
                 desc: App.hidden-blocks;

@@ -2,6 +2,7 @@
 
 slint::include_modules!();
 
+mod history_ui;
 mod landing_ui;
 
 use crate::api::{album_kind_word, Album, Api, Card, Collection, Pin, Playlist, Track};
@@ -475,6 +476,7 @@ impl Ctx {
             Page::Artists => self.refresh_my_artists(),
             Page::Trends | Page::Concerts | Page::Nonmusic => self.refresh_landing(),
             Page::Chart => self.refresh_chart(),
+            Page::History => self.enter_history(),
             Page::Grid => {
                 if let Some(k) = key {
                     self.st.borrow_mut().grid_key = Some(k);
@@ -611,6 +613,7 @@ impl Ctx {
             Page::Artists => self.show_my_top(),
             Page::Trends | Page::Concerts | Page::Nonmusic => self.refresh_landing(),
             Page::Chart => self.refresh_chart(),
+            Page::History => self.refresh_history(),
             _ => {}
         }
         if self.ui().global::<App>().get_menu_open() {
@@ -1168,6 +1171,70 @@ fn quit() {
     let _ = slint::quit_event_loop();
 }
 
+/// Обычное окно перед мини-плеером, место плашки и последний размер неразвёрнутого окна.
+#[derive(Default)]
+struct Places {
+    normal: Cell<Option<(Option<slint::PhysicalPosition>, slint::PhysicalSize, bool)>>,
+    mini: Cell<Option<slint::PhysicalPosition>>,
+    restored: Cell<Option<slint::PhysicalSize>>,
+}
+
+/// Место окна на экране; Wayland его приложению не сообщает.
+fn window_pos(w: &slint::Window) -> Option<slint::PhysicalPosition> {
+    w.with_winit_window(|ww| ww.outer_position().ok()).flatten().map(|p| slint::PhysicalPosition::new(p.x, p.y))
+}
+
+fn save_places(ui: &AppWindow, places: &Places) {
+    let w = ui.window();
+    if !sys::created(w) || w.is_minimized() {
+        return;
+    }
+    let mini = ui.global::<App>().get_mini();
+    if mini {
+        places.mini.set(window_pos(w).or(places.mini.get()));
+    }
+    let normal = if mini { places.normal.get() } else { Some((window_pos(w), w.size(), w.is_maximized())) };
+    with_ctx(|c| {
+        let mut st = c.st.borrow_mut();
+        let cfg = &mut st.cfg;
+        if let Some((pos, size, max)) = normal {
+            if let Some(p) = pos {
+                cfg.window_pos = Some([p.x, p.y]);
+            }
+            if let Some(s) = if max { places.restored.get() } else { Some(size) } {
+                cfg.window_size = Some([s.width, s.height]);
+            }
+            cfg.window_maximized = max;
+        }
+        cfg.mini_pos = places.mini.get().map(|p| [p.x, p.y]);
+        cfg.save();
+    });
+}
+
+/// Вернуть окно на экран, если его монитор с прошлого раза отключили.
+fn keep_on_screen(w: &slint::Window) {
+    let fix = w
+        .with_winit_window(|ww| {
+            let p = ww.outer_position().ok()?;
+            let seen = ww.available_monitors().any(|m| {
+                let (mp, ms) = (m.position(), m.size());
+                (mp.x..mp.x + ms.width as i32).contains(&(p.x + 100)) && (mp.y..mp.y + ms.height as i32).contains(&(p.y + 20))
+            });
+            if seen {
+                return None;
+            }
+            let m = ww.primary_monitor().or_else(|| ww.available_monitors().next())?;
+            let (mp, ms, s) = (m.position(), m.size(), ww.outer_size());
+            let x = mp.x + (ms.width as i32 - s.width as i32).max(0) / 2;
+            let y = mp.y + (ms.height as i32 - s.height as i32).max(0) / 2;
+            Some(slint::PhysicalPosition::new(x, y))
+        })
+        .flatten();
+    if let Some(p) = fix {
+        w.set_position(p);
+    }
+}
+
 /// Показать окно: при запуске в трей оно ещё не создано, после закрытия в трей — спрятано.
 fn reveal(ui: &AppWindow) {
     let first = !sys::created(ui.window());
@@ -1199,6 +1266,7 @@ fn finish_reveal(weak: slint::Weak<AppWindow>, first: bool, tries: u32) {
     if first {
         apply_ui_scale(&ui);
         sys::prepare(ui.window());
+        keep_on_screen(ui.window());
     }
     sys::raise(ui.window());
 }
@@ -1506,7 +1574,22 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_mac(cfg!(target_os = "macos"));
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
+    app.set_download_flac(cfg.download_flac);
     app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
+    let places = Rc::new(Places::default());
+    places.mini.set(cfg.mini_pos.map(|[x, y]| slint::PhysicalPosition::new(x, y)));
+    if let Some([w, h]) = cfg.window_size {
+        let size = slint::PhysicalSize::new(w, h);
+        places.restored.set(Some(size));
+        ui.window().set_size(size);
+    }
+    if let Some([x, y]) = cfg.window_pos {
+        ui.window().set_position(slint::PhysicalPosition::new(x, y));
+    }
+    if cfg.window_maximized {
+        ui.window().set_maximized(true);
+        app.set_maximized(true);
+    }
     let ctx = Rc::new(Ctx {
         ui: ui.as_weak(),
         lite: Cell::new(lite),
@@ -1728,6 +1811,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
 
     register_extra(&app);
     landing_ui::register(&app);
+    history_ui::register(&app);
     landing_ui::load_concert_assets(&app);
 
     let weak = ui.as_weak();
@@ -1740,9 +1824,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         }
     });
     let weak = ui.as_weak();
-    // Место и размер обычного окна до мини-плеера и последнее место самой плашки.
-    let normal = std::cell::Cell::new(None::<(slint::PhysicalPosition, slint::PhysicalSize, bool)>);
-    let mini_pos = std::cell::Cell::new(None::<slint::PhysicalPosition>);
+    let pl = places.clone();
     app.on_toggle_mini(move || {
         use winit::dpi::LogicalSize;
         let Some(ui) = weak.upgrade() else { return };
@@ -1768,31 +1850,62 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             if !fullscreen {
                 sys::set_window_buttons(w, false);
             }
-            normal.set(if fullscreen { None } else { Some((w.position(), w.size(), w.is_maximized())) });
+            let was_max = w.is_maximized();
+            pl.normal.set(if fullscreen { None } else { Some((window_pos(w), w.size(), was_max)) });
             app.set_mini(true);
             app.set_maximized(false);
-            w.set_maximized(false);
+            // KWin в ответ на set_maximized(false) присылает текущий размер и перебивает размер плашки.
+            if was_max {
+                w.set_maximized(false);
+            }
             // Slint обновит ограничения размера только на следующем кадре, а Windows без этого не даст ужать окно.
             w.with_winit_window(|ww| {
-                ww.set_maximized(false);
+                if was_max {
+                    ww.set_maximized(false);
+                }
                 ww.set_min_inner_size(Some(LogicalSize::new(320.0, 88.0)));
             });
             w.set_size(slint::LogicalSize::new(400.0, 88.0));
+            // Композитор на Linux возвращает размер развёрнутого окна уже после нашего запроса.
+            #[cfg(target_os = "linux")]
+            {
+                let weak = weak.clone();
+                Timer::single_shot(Duration::from_millis(150), move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    let w = ui.window();
+                    if ui.global::<App>().get_mini() && w.size().height as f32 > 120.0 * w.scale_factor() {
+                        w.set_size(slint::LogicalSize::new(400.0, 88.0));
+                    }
+                });
+            }
             let k = w.scale_factor();
             let (mw, mh, gap) = ((400.0 * k) as i32, (88.0 * k) as i32, (16.0 * k) as i32);
             let (l, t, r, b) = sys::work_area(w);
-            let p = mini_pos.get().unwrap_or(slint::PhysicalPosition::new(r - mw - gap, b - mh - gap));
+            let p = pl.mini.get().unwrap_or(slint::PhysicalPosition::new(r - mw - gap, b - mh - gap));
             w.set_position(slint::PhysicalPosition::new(p.x.min(r - mw).max(l), p.y.min(b - mh).max(t)));
         } else {
-            mini_pos.set(Some(w.position()));
+            pl.mini.set(window_pos(w).or(pl.mini.get()));
             app.set_mini(false);
             #[cfg(target_os = "macos")]
             sys::set_window_buttons(w, true);
             w.with_winit_window(|ww| ww.set_min_inner_size(Some(LogicalSize::new(960.0, 640.0))));
-            match normal.take() {
+            match pl.normal.take() {
                 Some((pos, size, max)) => {
-                    w.set_size(size);
-                    w.set_position(pos);
+                    w.set_size(if max { pl.restored.get().unwrap_or(size) } else { size });
+                    if let Some(pos) = pos {
+                        w.set_position(pos);
+                        // Оконный менеджер X11 может сдвинуть окно, пока применяет новый размер.
+                        #[cfg(target_os = "linux")]
+                        {
+                            let weak = weak.clone();
+                            Timer::single_shot(Duration::from_millis(150), move || {
+                                let Some(ui) = weak.upgrade() else { return };
+                                if !ui.global::<App>().get_mini() && window_pos(ui.window()) != Some(pos) {
+                                    ui.window().set_position(pos);
+                                }
+                            });
+                        }
+                    }
                     if max {
                         w.set_maximized(true);
                         app.set_maximized(true);
@@ -1944,11 +2057,17 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     });
 
     let weak = ui.as_weak();
+    let pl = places.clone();
     app.on_window_resized(move || {
         let weak = weak.clone();
+        let pl = pl.clone();
         Timer::single_shot(Duration::ZERO, move || {
             if let Some(ui) = weak.upgrade() {
                 apply_ui_scale(&ui);
+                let w = ui.window();
+                if !w.is_maximized() && !w.is_minimized() && !ui.global::<App>().get_mini() {
+                    pl.restored.set(Some(w.size()));
+                }
             }
         });
     });
@@ -1957,6 +2076,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         reveal(&ui);
     }
     slint::run_event_loop_until_quit()?;
+    save_places(&ui, &places);
     sys::cleanup();
     // Фоновые потоки (аудио, сеть, обложки) не ждём: иначе процесс может остаться
     // без окна и держать мьютекс, и следующий запуск молча закроется.
@@ -2303,7 +2423,7 @@ impl Ctx {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = w.upgrade() {
                         let app = ui.global::<App>();
-                        let chars: Vec<SharedString> = code.chars().map(|c| SharedString::from(c.to_uppercase().to_string())).collect();
+                        let chars: Vec<SharedString> = code.chars().map(|c| SharedString::from(c.to_string())).collect();
                         app.set_login_code_chars(ModelRc::from(Rc::new(VecModel::from(chars))));
                         app.set_login_code(code.into());
                         app.set_login_error(err.into());
@@ -2385,6 +2505,12 @@ impl Ctx {
         self.player.send(Cmd::Logout);
         {
             let mut st = self.st.borrow_mut();
+            if let Some(token) = st.cfg.token.clone() {
+                std::thread::spawn(move || match crate::auth::revoke(&token) {
+                    Ok(()) => log("выход: токен отозван"),
+                    Err(e) => log(format!("выход: токен не отозван: {e}")),
+                });
+            }
             st.cfg.forget_token();
             st.cfg.forget_refresh();
             st.cfg.token_expires = None;
@@ -2806,6 +2932,13 @@ impl Ctx {
                 st.cfg.download_dir = dir;
                 st.cfg.save();
             }
+            "download-flac" => {
+                let on = !app.get_download_flac();
+                app.set_download_flac(on);
+                let mut st = self.st.borrow_mut();
+                st.cfg.download_flac = on;
+                st.cfg.save();
+            }
             "hidden-blocks" => {
                 {
                     let mut st = self.st.borrow_mut();
@@ -3196,9 +3329,10 @@ impl Ctx {
                 let Some(net) = net else { return };
                 let api = net.api.clone();
                 let dir = music_dir(&self.st.borrow().cfg);
+                let flac = self.st.borrow().cfg.download_flac;
                 self.toast(format!("Скачиваем «{}»", t.title));
                 std::thread::spawn(move || {
-                    let res = save_track(&api, &dir, &t);
+                    let res = save_track(&api, &dir, &t, flac);
                     net.say(match res {
                         Ok(p) => format!("Сохранено: {}", p.display()),
                         Err(e) => format!("Не удалось скачать: {e}"),
@@ -3608,6 +3742,10 @@ impl Ctx {
                 drop(st);
                 self.release_chart();
             }
+            Page::History => {
+                drop(st);
+                self.release_history();
+            }
             Page::Artists => {
                 drop(st);
                 app.set_top_artists(ModelRc::default());
@@ -3652,6 +3790,7 @@ impl Ctx {
             "ar-popular" => self.st.borrow().artist_tracks.get(i).cloned(),
             "chart" => self.st.borrow().chart.get(i).cloned(),
             "results" => self.st.borrow().results.get(i).cloned(),
+            "history" => self.history_track(i),
             "likes-preview" => {
                 let data = self.collection()?;
                 let Data::Collection(c) = &*data else { return None };
@@ -3763,6 +3902,7 @@ impl Ctx {
         self.toast(format!("Скачиваем {}", tracks_word(tracks.len() as u64)));
         let api = net.api.clone();
         let dir = music_dir(&self.st.borrow().cfg).join(file_name(&folder));
+        let flac = self.st.borrow().cfg.download_flac;
         std::thread::spawn(move || {
             let total = tracks.len();
             let (mut ok, mut failed) = (0, 0);
@@ -3771,7 +3911,7 @@ impl Ctx {
                     ok += 1;
                     continue;
                 }
-                match save_track(&api, &dir, t) {
+                match save_track(&api, &dir, t, flac) {
                     Ok(_) => ok += 1,
                     Err(e) => {
                         failed += 1;
@@ -3822,9 +3962,9 @@ fn saved_already(dir: &std::path::Path, t: &Track) -> bool {
         .any(|e| std::fs::metadata(dir.join(format!("{stem}.{e}"))).is_ok_and(|m| m.len() > 0))
 }
 
-/// Скачать трек: сначала в `.part`, теги — в mp3, и только после этого переименовать в
+/// Скачать трек: сначала в `.part`, теги — в mp3 и FLAC, и только после этого переименовать в
 /// готовое имя. Обрыв оставит лишь `.part`, который следующая попытка перезапишет.
-fn save_track(api: &Api, dir: &std::path::Path, t: &Track) -> Result<std::path::PathBuf, String> {
+fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool) -> Result<std::path::PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let stem = track_file_stem(t);
     let part = dir.join(format!("{stem}.part"));
@@ -3833,7 +3973,17 @@ fn save_track(api: &Api, dir: &std::path::Path, t: &Track) -> Result<std::path::
         if attempt > 0 {
             std::thread::sleep(Duration::from_secs(2 * attempt));
         }
-        match api.stream_url(&t.id).and_then(|u| api.download_to(&u, &part)) {
+        let url = || {
+            if flac {
+                match api.flac_url(&t.id) {
+                    Ok(Some(u)) => return Ok(u),
+                    Ok(None) => {}
+                    Err(e) => log(format!("flac {}: {e}", t.id)),
+                }
+            }
+            api.stream_url(&t.id)
+        };
+        match url().and_then(|u| api.download_to(&u, &part)) {
             Ok(n) if n > 0 => {
                 last.clear();
                 break;
@@ -3858,16 +4008,28 @@ fn save_track(api: &Api, dir: &std::path::Path, t: &Track) -> Result<std::path::
         }
         let ext = audio_ext(&head);
         let path = dir.join(format!("{stem}.{ext}"));
+        let remux = flac && ext == "m4a";
+        let title = if t.version.is_empty() { t.title.clone() } else { format!("{} ({})", t.title, t.version) };
+        let cover = if ext == "mp3" || remux { t.cover_url(400).and_then(|u| api.fetch_bytes(&u).ok()) } else { None };
+        let tags = crate::tags::Tags { title: &title, artist: &t.artists, album: &t.album_title, year: t.year, track: t.position, cover: cover.as_deref() };
+        if remux {
+            let path = dir.join(format!("{stem}.flac"));
+            let tmp = dir.join(format!("{stem}.flac.part"));
+            match crate::flac::from_mp4(&part, &tmp, crate::tags::flac_blocks(&tags)) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&part);
+                    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+                    return Ok(path);
+                }
+                // Не разобрали MP4 — сохраним как .m4a, FLAC в нём тоже играется.
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    log(format!("flac {}: {e}", t.id));
+                }
+            }
+        }
         if ext == "mp3" {
-            let cover = t.cover_url(400).and_then(|u| api.fetch_bytes(&u).ok());
-            let tag = crate::tags::id3(&crate::tags::Tags {
-                title: &if t.version.is_empty() { t.title.clone() } else { format!("{} ({})", t.title, t.version) },
-                artist: &t.artists,
-                album: &t.album_title,
-                year: t.year,
-                track: t.position,
-                cover: cover.as_deref(),
-            });
+            let tag = crate::tags::id3(&tags);
             let tagged = dir.join(format!("{stem}.tagged.part"));
             {
                 use std::io::{Read as _, Seek as _, Write as _};

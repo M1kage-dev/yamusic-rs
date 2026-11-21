@@ -261,6 +261,36 @@ fn default_output_name() -> Option<String> {
     rodio::cpal::default_host().default_output_device()?.name().ok()
 }
 
+/// Многоканальные выходы Windows (виртуальные 7.1 у гарнитур) искажают f32, а i32 играют чисто: cpal#892.
+#[cfg(windows)]
+fn open_surround() -> Option<(OutputStream, rodio::OutputStreamHandle)> {
+    use rodio::cpal::traits::HostTrait;
+    use rodio::cpal::SampleFormat;
+    use rodio::DeviceTrait;
+    let dev = rodio::cpal::default_host().default_output_device()?;
+    let def = dev.default_output_config().ok()?;
+    if def.channels() <= 2 || def.sample_format() == SampleFormat::I32 {
+        return None;
+    }
+    let rate = def.sample_rate();
+    let cfg = dev
+        .supported_output_configs()
+        .ok()?
+        .find(|c| c.sample_format() == SampleFormat::I32 && c.channels() == def.channels() && c.min_sample_rate() <= rate && rate <= c.max_sample_rate())?
+        .with_sample_rate(rate);
+    let out = OutputStream::try_from_device_config(&dev, cfg).ok()?;
+    log(format!("аудиовыход: {} каналов, i32", def.channels()));
+    Some(out)
+}
+
+fn open_output() -> Result<(OutputStream, rodio::OutputStreamHandle), rodio::StreamError> {
+    #[cfg(windows)]
+    if let Some(out) = open_surround() {
+        return Ok(out);
+    }
+    OutputStream::try_default()
+}
+
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     let url = api.stream_url(&t.id)?;
     let buf = Buf::download(api.open(&url)?);
@@ -436,7 +466,7 @@ impl Engine {
 
     fn ensure_audio(&mut self) -> bool {
         if self.audio.is_none() {
-            match OutputStream::try_default() {
+            match open_output() {
                 Ok((stream, handle)) => match Sink::try_new(&handle) {
                     Ok(sink) => {
                         self.audio = Some((stream, sink));

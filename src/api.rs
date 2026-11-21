@@ -967,7 +967,15 @@ impl Api {
 
     /// Блоки лендингов отвечают так же, как официальному приложению для Windows.
     pub fn get_raw(&self, path: &str) -> Res<Value> {
-        let (status, text) = self.send_text(self.desktop_req(Method::GET, path))?;
+        self.send_raw(self.desktop_req(Method::GET, path))
+    }
+
+    pub fn post_raw(&self, path: &str, body: &Value) -> Res<Value> {
+        self.send_raw(self.desktop_req(Method::POST, path).json(body))
+    }
+
+    fn send_raw(&self, rb: RequestBuilder) -> Res<Value> {
+        let (status, text) = self.send_text(rb)?;
         if !status.is_success() {
             return Err(format!("HTTP {status}: {}", short(&text)));
         }
@@ -1218,12 +1226,7 @@ impl Api {
         if LESS_AI.load(std::sync::atomic::Ordering::Relaxed) {
             rb = rb.header("X-Yandex-Music-AI-Content-Rate", "reduced");
         }
-        let (status, text) = self.send_text(rb)?;
-        if !status.is_success() {
-            return Err(format!("HTTP {status}: {}", short(&text)));
-        }
-        let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        Ok(v.get("result").cloned().unwrap_or(v))
+        self.send_raw(rb)
     }
 
     /// Треки волны через сессию ротора, как у оригинала.
@@ -1556,9 +1559,16 @@ impl Api {
         match self.stream_url_legacy(track_id) {
             Ok(u) => Ok(u),
             Err(e1) => self
-                .stream_url_file_info(track_id)
+                .file_info(track_id, "nq", "mp3,aac,he-aac")
+                .map(|(_, u)| u)
                 .map_err(|e2| format!("download-info: {e1}; get-file-info: {e2}")),
         }
+    }
+
+    /// Lossless без шифрования есть только как FLAC в MP4. None — у трека нет FLAC.
+    pub fn flac_url(&self, track_id: &str) -> Res<Option<String>> {
+        let (codec, url) = self.file_info(track_id, "lossless", "flac-mp4,flac")?;
+        Ok(codec.starts_with("flac").then_some(url))
     }
 
     fn stream_url_legacy(&self, track_id: &str) -> Res<String> {
@@ -1598,9 +1608,10 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         Ok(format!("https://{host}/get-mp3/{hash}/{ts}{path}"))
     }
 
-    fn stream_url_file_info(&self, track_id: &str) -> Res<String> {
+    /// Кодек и ссылка из get-file-info.
+    fn file_info(&self, track_id: &str, quality: &str, codecs: &str) -> Res<(String, String)> {
         let ts = now().as_secs().to_string();
-        let (quality, codecs, transports) = ("nq", "mp3,aac,he-aac", "raw");
+        let transports = "raw";
         let mut sg = sign(&format!("{ts}{track_id}{quality}{codecs}{transports}").replace(',', ""))?;
         sg.pop();
         let v = self.get(
@@ -1615,11 +1626,12 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
             ],
         )?;
         let di = v.get("downloadInfo").ok_or("нет downloadInfo")?;
-        di.get("url")
+        let url = di
+            .get("url")
             .and_then(|u| u.as_str())
             .or_else(|| di.get("urls")?.get(0)?.as_str())
-            .map(String::from)
-            .ok_or_else(|| "нет url в downloadInfo".into())
+            .ok_or("нет url в downloadInfo")?;
+        Ok((str_of(di, "codec"), url.to_string()))
     }
 
     /// Скачать файл потоком на диск, без чтения целиком в память. Ссылки уже подписаны — без токена.

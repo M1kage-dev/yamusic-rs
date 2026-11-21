@@ -28,6 +28,7 @@ pub enum Data {
     Collection(Collection),
     Skeleton(crate::landing::Skeleton),
     Block(crate::landing::LBlock),
+    History(Vec<crate::history::Day>),
 }
 
 struct Slot {
@@ -145,6 +146,7 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
         "playlists" => api.playlists(uid).map(Data::Playlists),
         "lyrics" => api.lyrics(arg).map(Data::Lyrics),
         "collection" => api.collection(uid).map(Data::Collection),
+        "history" => crate::history::load(api).map(Data::History),
         "skeleton" => {
             let v = api.get_raw(&format!("/landing/skeleton/{arg}?showWizard=false"))?;
             let tabs = v
