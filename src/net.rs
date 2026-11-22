@@ -130,14 +130,15 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                 artist: None,
             })
         }),
-        "artist-tracks" => {
+        "artist-tracks" | "familiar" => {
             let info = api.get_raw(&format!("/artists/{arg}/info"))?;
             let a = info.get("artist").and_then(crate::api::parse_artist).ok_or("нет данных об исполнителе")?;
+            let familiar = kind == "familiar";
             Ok(Data::List(ListData {
                 kind: ListKind::Artist,
-                title: a.name.clone(),
+                title: if familiar { "Знакомое вам".into() } else { a.name.clone() },
                 covers: a.cover.iter().cloned().collect(),
-                tracks: api.artist_tracks(arg)?,
+                tracks: if familiar { api.artist_familiar(arg)? } else { api.artist_tracks(arg)? },
                 playlist: None,
                 album: None,
                 artist: Some(a),

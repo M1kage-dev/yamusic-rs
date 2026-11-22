@@ -35,6 +35,9 @@ pub struct Named {
     pub id: String,
     pub name: String,
     pub cover: Option<String>,
+    /// Фото без фона: телефон ставит его над названием трека в «Моей волне».
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub cutout: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +69,17 @@ pub struct Track {
     pub position: Option<u32>,
     /// Пакет волны, из которого пришёл трек: с ним уходит фидбек по этому треку.
     pub batch_id: String,
+    /// Оттенок и энергия трека: по ним «Моя волна» на телефоне красит фон.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub mood: Option<Mood>,
+}
+
+/// `trackParameters` из ответа API.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub struct Mood {
+    pub hue: f32,
+    pub energy: f32,
 }
 
 impl Track {
@@ -118,6 +132,8 @@ pub struct Playlist {
     pub likes: u64,
     /// Логин владельца — им адресуется плейлист в коде для вставки.
     pub login: String,
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub track_count: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +164,20 @@ pub struct WheelItem {
     pub cover: Option<String>,
     pub round: bool,
     pub seeds: Vec<String>,
+    /// Цвет обложки: по его оттенку телефонный клиент красит подложку карточки.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub color: Option<[u8; 3]>,
+}
+
+impl WheelItem {
+    /// Станция ротора для карточки; None — обычная «Моя волна».
+    pub fn station(&self) -> Option<String> {
+        let seed = self.seeds.first().filter(|s| s.as_str() != WAVE)?;
+        Some(match seed.split_once(':') {
+            Some(("artist-tracks", id)) => format!("artist:{id}"),
+            _ => seed.clone(),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -251,6 +281,7 @@ fn artists_of(v: &Value) -> Vec<Named> {
                         id: s(x.get("id")).unwrap_or_default(),
                         name: x.get("name")?.as_str()?.to_string(),
                         cover: x.pointer("/cover/uri").and_then(|u| u.as_str()).map(String::from),
+                        cutout: x.pointer("/cutoutCover/uri").and_then(|u| u.as_str()).map(String::from),
                     })
                 })
                 .collect()
@@ -324,7 +355,14 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
         year: album.and_then(|a| a.get("year")).and_then(|y| y.as_u64()).map(|y| y as u32),
         position: album.and_then(|a| a.pointer("/trackPosition/index")).and_then(|y| y.as_u64()).map(|y| y as u32),
         batch_id: String::new(),
+        mood: mood_of(v),
     })
+}
+
+fn mood_of(v: &Value) -> Option<Mood> {
+    let p = v.get("trackParameters")?;
+    let f = |k: &str| p.get(k).and_then(|x| x.as_f64()).map(|x| x as f32);
+    Some(Mood { hue: f("hue")?, energy: f("energy").unwrap_or(0.5) })
 }
 
 pub(crate) fn parse_artist(v: &Value) -> Option<Artist> {
@@ -390,6 +428,7 @@ pub(crate) fn parse_playlist(v: &Value) -> Option<Playlist> {
         color: hex_color(v.pointer("/derivedColors/average")),
         likes: v.get("likesCount").and_then(|c| c.as_u64()).unwrap_or(0),
         login: owner.map(|o| str_of(o, "login")).unwrap_or_default(),
+        track_count: v.get("trackCount").and_then(|c| c.as_u64()).unwrap_or(0),
     })
 }
 
@@ -401,6 +440,9 @@ pub static LESS_AI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 /// «Треки 18+»: выключено — новая сессия волны просит без них (`allowExplicit`), а плеер
 /// пропускает треки с пометкой E, как оригинал с фильтром очереди.
 pub static ALLOW_EXPLICIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// «Добавлять треки в конец плейлиста».
+pub static ADD_TO_END: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn allow_explicit() -> bool {
     ALLOW_EXPLICIT.load(std::sync::atomic::Ordering::Relaxed)
@@ -966,8 +1008,18 @@ impl Api {
     }
 
     /// Блоки лендингов отвечают так же, как официальному приложению для Windows.
+    #[cfg(not(target_os = "android"))]
     pub fn get_raw(&self, path: &str) -> Res<Value> {
         self.send_raw(self.desktop_req(Method::GET, path))
+    }
+
+    /// На телефоне блоки как у мобильного клиента: сервер собирает страницы по его версии.
+    #[cfg(target_os = "android")]
+    pub fn get_raw(&self, path: &str) -> Res<Value> {
+        let rb = self
+            .req_as(Method::GET, path, crate::client::ANDROID_APP_CLIENT)
+            .header("X-Yandex-Music-Device", crate::client::mobile_device_header());
+        self.send_raw(rb)
     }
 
     pub fn post_raw(&self, path: &str, body: &Value) -> Res<Value> {
@@ -1060,6 +1112,11 @@ impl Api {
         let tracks = self.get_raw(&format!("/artists/{id}/tracks")).unwrap_or_default();
         let fam = self.get_raw(&format!("/artists/{id}/familiar-you/info?withWaveInfo=true&withCollectionInfo=true")).unwrap_or_default();
         let block = |b: &str| cards(&self.get_raw(&format!("/artists/{id}/blocks/{b}")).unwrap_or_default());
+        // Сервер отдаёт альбомы вперемешку, у оригинала новые идут первыми (#52).
+        let by_year = |mut v: Vec<Card>| {
+            v.sort_by_key(|c| std::cmp::Reverse(c.year.get(..4).and_then(|y| y.parse::<u32>().ok()).unwrap_or(0)));
+            v
+        };
         Ok(ArtistFull {
             id: a.id.clone(),
             name: a.name.clone(),
@@ -1070,8 +1127,8 @@ impl Api {
             familiar_tracks: fam.pointer("/collection/trackCount").and_then(|x| x.as_u64()).unwrap_or(0)
                 + fam.pointer("/wave/trackCount").and_then(|x| x.as_u64()).unwrap_or(0),
             familiar_albums: fam.pointer("/collection/albumCount").and_then(|x| x.as_u64()).unwrap_or(0),
-            studio: block("artist-studio-albums"),
-            albums: block("artist-albums"),
+            studio: by_year(block("artist-studio-albums")),
+            albums: by_year(block("artist-albums")),
             playlists: block("artist-playlists"),
             compilations: block("artist-compilations"),
             similar: block("similar-artists"),
@@ -1191,6 +1248,7 @@ impl Api {
                             description: str_of(it, "description"),
                             cover: d.pointer("/agent/cover/uri").and_then(|u| u.as_str()).map(String::from),
                             round: d.pointer("/agent/entity/type").and_then(|t| t.as_str()) == Some("artist"),
+                            color: hex_color(d.pointer("/agent/cover/color")),
                             seeds: d
                                 .pointer("/wave/seeds")
                                 .and_then(|s| s.as_array())
@@ -1201,6 +1259,21 @@ impl Api {
                     .collect()
             })
             .unwrap_or_default())
+    }
+
+    /// Похожие треки, как в блоке под плеером телефона.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn similar_tracks(&self, track_id: &str) -> Res<Vec<Track>> {
+        let v = self.get(&format!("/tracks/{track_id}/similar"), &[])?;
+        Ok(v.get("similarTracks").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(parse_track).collect()).unwrap_or_default())
+    }
+
+    /// Исполнитель и сколько человек слушали его за месяц.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn artist_brief(&self, id: &str) -> Res<(Artist, Option<u64>)> {
+        let info = self.get_raw(&format!("/artists/{id}/brief-info"))?;
+        let a = info.get("artist").and_then(parse_artist).ok_or("нет данных об исполнителе")?;
+        Ok((a, info.pointer("/stats/lastMonthListeners").and_then(|x| x.as_u64())))
     }
 
     pub fn pins(&self) -> Res<Vec<Pin>> {
@@ -1394,6 +1467,20 @@ impl Api {
         })
     }
 
+    /// «Знакомое вам» у исполнителя: сначала треки из коллекции, потом слышанные в Моей волне.
+    pub fn artist_familiar(&self, id: &str) -> Res<Vec<Track>> {
+        let v = self.get_raw(&format!("/artists/{id}/familiar-you?waveTracksLimit=100&collectionTracksLimit=100&collectionAlbumsLimit=20"))?;
+        let mut seen = std::collections::HashSet::new();
+        let tracks = ["/collection/tracks", "/wave/tracks"]
+            .iter()
+            .filter_map(|p| v.pointer(p).and_then(|t| t.as_array()))
+            .flatten()
+            .filter_map(|x| parse_track(x.get("track").unwrap_or(x)))
+            .filter(|t| seen.insert(t.id.clone()))
+            .collect();
+        Ok(tracks)
+    }
+
     pub fn artist_tracks(&self, id: &str) -> Res<Vec<Track>> {
         let mut out = Vec::new();
         for page in 0..10 {
@@ -1451,7 +1538,7 @@ impl Api {
         parse_playlist(&v).ok_or_else(|| "Яндекс не вернул новый плейлист".into())
     }
 
-    /// Добавляет треки в начало плейлиста одним запросом, порядок сохраняется.
+    /// Добавляет треки в начало плейлиста или в конец (`ADD_TO_END`) одним запросом.
     /// Ревизию берём свежую, иначе API отвечает 412.
     pub fn add_to_playlist(&self, uid: &str, kind: &str, tracks: &[Track]) -> Res<()> {
         let v = self.get(&format!("/users/{uid}/playlists/{kind}"), &[])?;
@@ -1466,7 +1553,12 @@ impl Api {
                 item
             })
             .collect();
-        let diff = json!([{ "op": "insert", "at": 0, "tracks": items }]).to_string();
+        let at = if ADD_TO_END.load(std::sync::atomic::Ordering::Relaxed) {
+            v.get("trackCount").and_then(|n| n.as_u64()).unwrap_or(0)
+        } else {
+            0
+        };
+        let diff = json!([{ "op": "insert", "at": at, "tracks": items }]).to_string();
         self.send(
             self.req(Method::POST, &format!("/users/{uid}/playlists/{kind}/change-relative"))
                 .form(&[("kind", kind), ("revision", revision.as_str()), ("diff", diff.as_str())]),

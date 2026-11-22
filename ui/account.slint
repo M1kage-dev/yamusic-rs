@@ -363,6 +363,13 @@ export component SettingsPage inherits Rectangle {
                 }
             }
             SettingItem {
+                title: T.t("Логарифмическая громкость");
+                desc: T.t("Громкость меняется ровнее на слух, тихие уровни настраиваются точнее");
+                toggle: true;
+                on: App.log-volume;
+                clicked => { App.setting("log-volume"); }
+            }
+            SettingItem {
                 title: T.t("Папка для скачивания");
                 desc: App.download-dir;
                 clicked => { App.setting("download-dir"); }

@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ahead;
 mod api;
 mod assets;
 mod auth;
@@ -27,6 +28,7 @@ mod tray_macos;
 mod update_macos;
 mod palette;
 mod player;
+mod save;
 mod secret;
 mod stream;
 #[cfg_attr(windows, path = "sys/windows.rs")]

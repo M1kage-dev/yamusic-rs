@@ -18,6 +18,9 @@ pub const POLL: Duration = Duration::from_secs(30 * 60);
 #[cfg(windows)]
 const ASSET: &str = concat!(env!("CARGO_PKG_NAME"), ".exe");
 
+/// На Android браузер открывает APK, а не страницу релиза.
+const APK: &str = "yamusic-rs-arm64-v8a.apk";
+
 /// Проверка включена в настройках («Проверять обновления»).
 pub static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
@@ -96,6 +99,20 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     Some((it.next()?.ok()?, it.next()?.ok()?, it.next().unwrap_or(Ok(0)).ok()?))
 }
 
+fn release_page(v: &serde_json::Value, prefer_apk: bool) -> String {
+    let apk = v
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .filter(|_| prefer_apk)
+        .and_then(|assets| assets.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(APK)))
+        .and_then(|a| a.get("browser_download_url")?.as_str());
+    // Внешний адрес может открыть браузер системы, поэтому разрешаем только HTTPS.
+    apk
+        .and_then(crate::client::browser_url)
+        .or_else(|| crate::client::browser_url(v.get("html_url")?.as_str()?))
+        .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string())
+}
+
 /// Последний релиз, если он новее запущенной версии.
 pub fn check() -> Result<Option<Release>, String> {
     let api = env!("CARGO_PKG_REPOSITORY").replace("https://github.com/", "https://api.github.com/repos/");
@@ -124,12 +141,7 @@ pub fn check() -> Result<Option<Release>, String> {
     let dmg = assets.and_then(|assets| find_asset(assets, |n| n.starts_with("yamusic-rs-") && n.ends_with("-macos.dmg")));
     Ok(Some(Release {
         version: tag.trim_start_matches('v').to_string(),
-        // Страницу откроет браузер системы: адрес из ответа берём, только если это https.
-        page: v
-            .get("html_url")
-            .and_then(|u| u.as_str())
-            .and_then(crate::client::browser_url)
-            .unwrap_or_else(|| env!("CARGO_PKG_REPOSITORY").to_string()),
+        page: release_page(&v, cfg!(target_os = "android")),
         #[cfg(windows)]
         exe,
         #[cfg(target_os = "macos")]
@@ -255,6 +267,27 @@ mod tests {
         assert_eq!(split_version("1.0.1+upstream.1.1.2"), ("1.0.1", Some("1.1.2")));
         assert_eq!(split_version("v2.0.0"), ("2.0.0", None));
         assert_eq!(split_version("1.1.2+other.3"), ("1.1.2", None));
+    }
+
+    #[test]
+    fn android_prefers_apk_but_desktop_uses_release_page() {
+        let page = "https://github.com/example/yamusic-rs/releases/tag/v1.1.5";
+        let apk = "https://github.com/example/yamusic-rs/releases/download/v1.1.5/yamusic-rs-arm64-v8a.apk";
+        let mut release = serde_json::json!({
+            "html_url": page,
+            "assets": [
+                {"name": "yamusic-rs-1.1.5-macos.dmg", "browser_download_url": "https://example.com/test.dmg"},
+                {"name": "yamusic-rs-arm64-v8a.apk", "browser_download_url": apk},
+            ]
+        });
+        assert_eq!(release_page(&release, false), page);
+        assert_eq!(release_page(&release, true), apk);
+        release["assets"][1]["browser_download_url"] = serde_json::json!("http://example.com/test.apk");
+        assert_eq!(release_page(&release, true), page);
+        release["assets"] = serde_json::json!([]);
+        assert_eq!(release_page(&release, true), page);
+        release["html_url"] = serde_json::json!(null);
+        assert_eq!(release_page(&release, true), env!("CARGO_PKG_REPOSITORY"));
     }
 
     #[cfg(windows)]

@@ -1,6 +1,7 @@
 //! Аудио-движок: очередь, загрузка и предзагрузка треков, фидбек волне, воспроизведение.
 //! Живёт в своём потоке, UI шлёт ему команды и читает `Shared`.
 
+use crate::ahead::Ahead;
 use crate::api::{Account, Api, Batch, Res, Track, WaveSession, WAVE};
 use crate::config::log;
 use crate::eq::{Eq, EqParams};
@@ -84,6 +85,14 @@ pub struct Shared {
     pub error: Option<(String, Instant)>,
 }
 
+/// Как положение ползунка громкости переводится в усиление.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Loudness {
+    Square,
+    /// 50 дБ на всю шкалу: каждый шаг ползунка на слух одинаковый (#44).
+    Decibels,
+}
+
 pub enum Cmd {
     Login(String),
     Logout,
@@ -94,6 +103,7 @@ pub enum Cmd {
     Prev,
     Seek(f32),
     Volume(f32),
+    Loudness(Loudness),
     LikeTrack(Track),
     Dislike,
     Wave(Source),
@@ -283,17 +293,29 @@ fn open_surround() -> Option<(OutputStream, rodio::OutputStreamHandle)> {
     Some(out)
 }
 
+/// Только выход по умолчанию: `try_default` при неудаче молча берёт любое другое устройство,
+/// и звук уходит, например, в неподключённый HDMI (#53).
 fn open_output() -> Result<(OutputStream, rodio::OutputStreamHandle), rodio::StreamError> {
+    use rodio::cpal::traits::HostTrait;
     #[cfg(windows)]
     if let Some(out) = open_surround() {
         return Ok(out);
     }
-    OutputStream::try_default()
+    let dev = rodio::cpal::default_host().default_output_device().ok_or(rodio::StreamError::NoDevice)?;
+    OutputStream::try_from_device(&dev)
 }
+
+#[cfg(not(target_os = "linux"))]
+const NO_OUTPUT: &str = "Не найдено аудиоустройство";
+#[cfg(target_os = "linux")]
+const NO_OUTPUT: &str = "Не открылся звуковой выход по умолчанию. Для PipeWire нужен pipewire-alsa";
+
+/// Сколько позиция может стоять на месте у играющего скачанного трека.
+const STALL_LIMIT: Duration = Duration::from_secs(3);
 
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     let url = api.stream_url(&t.id)?;
-    let buf = Buf::download(api.open(&url)?);
+    let buf = Buf::download(api.open(&url)?)?;
     let dec = Decoder::new(buf.reader()).map_err(|e| format!("не удалось декодировать: {e}"))?;
     Ok((buf, dec))
 }
@@ -342,6 +364,8 @@ struct Engine {
     out_checked: Instant,
     /// Выход пропал посреди трека: с этого места трек продолжится по Play.
     held_pos: Option<f32>,
+    /// Позиция играющего трека и с какого момента она не меняется.
+    stall: (f32, Instant),
     api: Option<Api>,
     uid: String,
     source: Source,
@@ -373,6 +397,7 @@ struct Engine {
     loaded: bool,
     paused: bool,
     volume: f32,
+    loudness: Loudness,
     repeat: Repeat,
     shuffle: bool,
     prefetch: Option<(String, Audio)>,
@@ -406,6 +431,7 @@ impl Engine {
             #[cfg(windows)]
             out_checked: Instant::now(),
             held_pos: None,
+            stall: (0.0, Instant::now()),
             api: None,
             uid: String::new(),
             source: Source::Wave,
@@ -430,6 +456,7 @@ impl Engine {
             loaded: false,
             paused: true,
             volume: 0.6,
+            loudness: Loudness::Square,
             repeat: Repeat::Off,
             shuffle: false,
             prefetch: None,
@@ -483,6 +510,15 @@ impl Engine {
         self.audio.is_some()
     }
 
+    fn gain(&self) -> f32 {
+        let v = self.volume;
+        match self.loudness {
+            Loudness::Square => v * v,
+            Loudness::Decibels if v <= 0.0 => 0.0,
+            Loudness::Decibels => 10f32.powf((v - 1.0) * 50.0 / 20.0),
+        }
+    }
+
     fn pos(&self) -> f32 {
         match self.sink() {
             Some(s) => s.get_pos().as_secs_f32(),
@@ -504,13 +540,40 @@ impl Engine {
         }
         log(format!("аудиовыход: {} → {}", self.out_name.as_deref().unwrap_or("нет"), now.as_deref().unwrap_or("нет")));
         let pos = self.pos();
+        self.reopen_output(pos, now.is_some());
+    }
+
+    /// Трек играет и скачан целиком, а позиция стоит: выход умер молча. На Linux так бывает
+    /// после блокировки экрана (#49).
+    fn check_stall(&mut self) {
+        let pos = self.pos();
+        let playing = self.loaded
+            && !self.paused
+            && self.current_buf.as_ref().is_some_and(|b| b.done())
+            && self.sink().is_some_and(|s| !s.empty());
+        if !playing || pos != self.stall.0 {
+            self.stall = (pos, Instant::now());
+            return;
+        }
+        if self.stall.1.elapsed() < STALL_LIMIT {
+            return;
+        }
+        log(format!("звук встал на {pos:.1} с, выход переоткрывается"));
+        self.stall = (pos, Instant::now());
+        self.reopen_output(pos, true);
+    }
+
+    /// Закрыть выход и продолжить трек с `pos` на новом. Не вышло — пауза до Play с того же места.
+    fn reopen_output(&mut self, pos: f32, available: bool) {
         self.audio = None;
-        self.out_name = None;
+        #[cfg(windows)]
+        {
+            self.out_name = None;
+        }
         if !self.loaded {
             return;
         }
-        if now.is_none() || !self.restore_at(pos) {
-            // Выхода нет: трек встаёт на паузу и ждёт Play с того же места.
+        if !available || !self.restore_at(pos) {
             self.held_pos = Some(pos);
             if !self.paused {
                 self.paused = true;
@@ -530,8 +593,8 @@ impl Engine {
             return false;
         }
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Eq::new(src.convert_samples::<f32>(), self.eq.clone());
-        let (vol, paused) = (self.volume * self.volume, self.paused);
+        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let (vol, paused) = (self.gain(), self.paused);
         let Some(sink) = self.sink() else { return false };
         sink.pause();
         sink.set_volume(vol);
@@ -809,6 +872,7 @@ impl Engine {
     fn tick(&mut self) {
         #[cfg(windows)]
         self.check_output();
+        self.check_stall();
         if let Some(at) = self.retry_at {
             if Instant::now() >= at {
                 self.retry_at = None;
@@ -847,7 +911,7 @@ impl Engine {
     fn replay(&mut self) -> bool {
         let Some(buf) = self.current_buf.clone() else { return false };
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Eq::new(src.convert_samples::<f32>(), self.eq.clone());
+        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
         if let Some(sink) = self.sink() {
             sink.append(src);
             sink.play();
@@ -990,7 +1054,13 @@ impl Engine {
             Cmd::Volume(v) => {
                 self.volume = v.clamp(0.0, 1.0);
                 if let Some(s) = self.sink() {
-                    s.set_volume(self.volume * self.volume);
+                    s.set_volume(self.gain());
+                }
+            }
+            Cmd::Loudness(l) => {
+                self.loudness = l;
+                if let Some(s) = self.sink() {
+                    s.set_volume(self.gain());
                 }
             }
             Cmd::LikeTrack(t) => self.toggle_like(t),
@@ -1325,7 +1395,7 @@ impl Engine {
         if let Some(pos) = self.held_pos.filter(|_| self.loaded && self.audio.is_none()) {
             if !self.restore_at(pos) {
                 self.paused = true;
-                self.error("Не найдено аудиоустройство");
+                self.error(NO_OUTPUT);
                 return;
             }
         }
@@ -1480,8 +1550,8 @@ impl Engine {
             self.sh().loading = false;
             return;
         }
-        let src = Eq::new(src.convert_samples::<f32>(), self.eq.clone());
-        let vol = self.volume * self.volume;
+        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let vol = self.gain();
         let paused = self.paused;
         if let Some(sink) = self.sink() {
             sink.clear();

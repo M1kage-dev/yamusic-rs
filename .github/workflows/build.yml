@@ -1,7 +1,6 @@
 # Каждый push и PR: clippy, тесты и сборки в артефактах: exe для Windows, .deb, .rpm и
-# AppImage для Linux.
-# Тег v* (например v1.0.1): то же и релиз со всеми файлами. Его создаёт отдельное задание
-# после обеих сборок. Встроенная обновлялка на Windows ищет в релизе yamusic-rs.exe.
+# AppImage для Linux (x86_64 и aarch64), универсальный .dmg для macOS.
+# Тег v*: desktop-релиз со всеми файлами. Подписанные APK выпускает апстрим отдельно.
 name: Сборка
 
 on:
@@ -43,6 +42,7 @@ jobs:
       # Без zip: из артефактов скачивается сразу yamusic-rs.exe.
       - uses: actions/upload-artifact@v7
         with:
+          name: yamusic-rs-exe
           path: target/release/yamusic-rs.exe
           archive: false
 
@@ -86,15 +86,69 @@ jobs:
       # По файлу на артефакт: без zip каждый скачивается как есть.
       - uses: actions/upload-artifact@v7
         with:
+          name: appimage-x86_64
           path: target/appimage/yamusic-rs-x86_64.AppImage
           archive: false
       - uses: actions/upload-artifact@v7
         with:
+          name: deb-x86_64
           path: ${{ steps.pkg.outputs.deb }}
           archive: false
       - uses: actions/upload-artifact@v7
         with:
+          name: rpm-x86_64
           path: ${{ steps.pkg.outputs.rpm }}
+          archive: false
+
+  # Нативная сборка ARM на той же glibc 2.35; clippy и тесты идут в linux на x86_64.
+  linux-arm64:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Зависимости сборки
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libasound2-dev libfontconfig1-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev \
+            libxcursor-dev libxi-dev libxrandr-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release
+
+      - name: Пакеты
+        id: pkg
+        run: |
+          command -v cargo-deb >/dev/null || cargo install --locked cargo-deb
+          command -v cargo-generate-rpm >/dev/null || cargo install --locked cargo-generate-rpm
+          tools/appimage.sh
+          cargo deb --no-build
+          cargo generate-rpm
+          echo "deb=$(ls target/debian/*.deb)" >> "$GITHUB_OUTPUT"
+          echo "rpm=$(ls target/generate-rpm/*.rpm)" >> "$GITHUB_OUTPUT"
+
+      - name: SHA-256
+        run: sha256sum target/release/yamusic-rs target/appimage/*.AppImage ${{ steps.pkg.outputs.deb }} ${{ steps.pkg.outputs.rpm }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: appimage-aarch64
+          path: target/appimage/yamusic-rs-aarch64.AppImage
+          if-no-files-found: error
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-arm64
+          path: ${{ steps.pkg.outputs.deb }}
+          if-no-files-found: error
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpm-aarch64
+          path: ${{ steps.pkg.outputs.rpm }}
+          if-no-files-found: error
           archive: false
 
   # macOS: две архитектуры одним универсальным бинарём. Тесты и clippy — один раз,
@@ -161,7 +215,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, macos]
+    needs: [windows, linux, linux-arm64, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

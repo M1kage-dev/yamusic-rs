@@ -5,7 +5,7 @@
 # Яндекс Музыка RS — сборка для macOS
 
 **Неофициальный клиент Яндекс Музыки на Rust и Slint. Этот форк добавляет macOS:
-родное окно, Keychain, медиаклавиши, автозапуск.**
+родное окно, медиаклавиши, значок в строке меню и автозапуск.**
 
 ![macOS 11+ arm64](https://img.shields.io/badge/macOS-11%2B%20arm64-2b2b30?labelColor=1c1c1f)
 [![GPL-3.0](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-GPL--3.0-2b2b30?labelColor=1c1c1f)](LICENSE)
@@ -19,8 +19,9 @@
 
 > [!NOTE]
 > Это форк [SpolzerMod/yamusic-rs](https://github.com/SpolzerMod/yamusic-rs). Основной репозиторий
-> поддерживает Windows и Linux; macOS туда не принимают — у автора нет мака, проверить сборку ему
-> нечем. Здесь macOS добавлен третьей платформой, а остальной код синхронизируется с upstream.
+> поддерживает Windows, Linux и Android. Этот форк добавляет macOS и публикует сборки для
+> настольных систем. [Подписанный APK для Android](https://github.com/SpolzerMod/yamusic-rs/releases/latest)
+> выпускается в основном репозитории.
 
 ## Что это
 
@@ -54,18 +55,19 @@
 Проверено на macOS 27.2.1, Apple Silicon:
 
 - сборка и запуск `.app`: окно с «светофором», страницы, шрифты с music.yandex.ru, экран входа с кодом устройства;
-- `cargo test` (28 тестов, 4 помечены `ignored`), `clippy --all-targets -- -D warnings`;
+- `cargo test` и `clippy --all-targets -- -D warnings`;
 - `plutil -lint` и `codesign --verify --deep --strict` для бандла;
-- запись, чтение и удаление токена в Keychain (тест `--ignored keychain`).
+- запись, чтение и удаление секрета в файле с правами `0600` (тест `roundtrip_through_file`).
 
 Вживую ещё не проверено — нужен вход в аккаунт и играющий трек: сохранение токена из интерфейса,
 медиаклавиши и Пункт управления, скрытие «светофора» в мини-плеере, автозапуск после перезагрузки.
-Intel не собирался и не проверялся.
+Срез Intel собирается в CI; на физическом Mac с Intel приложение не проверяли.
 
 ## Установка
 
 Готовый `.dmg` — в [релизах](https://github.com/M1kage-dev/yamusic-rs/releases/latest)
-(универсальный: Apple Silicon и Intel, SHA-256 в описании релиза). Собрать самому — один шаг:
+(универсальный: Apple Silicon и Intel, SHA-256 в описании релиза). Там же — `.exe` для Windows
+и `.deb`, `.rpm`, AppImage для Linux x86-64 и ARM64. Сборка на macOS из исходников:
 
 ```bash
 git clone https://github.com/M1kage-dev/yamusic-rs
@@ -118,14 +120,14 @@ xattr -dr com.apple.quarantine "/Applications/Яндекс Музыка RS.app"
 
 ```bash
 cargo build --release            # бинарь под текущую архитектуру
-cargo test                       # 33 теста; 4 ignored требуют сети, app.asar или Keychain
+cargo test --locked             # сетевые и системные smoke-тесты помечены ignored
 cargo clippy --all-targets -- -D warnings
 tools/macos-app.sh --skip-build  # бандл из готового бинаря
 tools/macos-app.sh --universal --dmg  # arm64 + x86_64 одним бинарём и .dmg
 ```
 
-GitHub Actions на каждый push собирает то же самое: `windows`, `linux` и `macos` (универсальный
-бинарь, проверка подписи, `lipo -archs`), а на тег `v*` прикладывает `.dmg` к релизу.
+GitHub Actions собирает `windows`, `linux`, `linux-arm64` и `macos` (универсальный бинарь,
+проверка подписи, `lipo -archs`), а на тег `v*` публикует артефакты с контрольными суммами.
 
 `cargo fmt` не включён: стиль upstream шире стандартного, массовый реформат сломал бы слияния
 с основным репозиторием.
@@ -174,8 +176,9 @@ GPL-3.0, как и upstream: изменённая версия распрост�
 ## English
 
 Fork of [SpolzerMod/yamusic-rs](https://github.com/SpolzerMod/yamusic-rs) that adds macOS.
-The same Rust + Slint + Skia client: native window frame with traffic lights, Keychain for the
-token, media keys and Now Playing, live system theme, LaunchAgent autostart.
+The same Rust + Slint + Skia client: native window frame, menu bar item, media keys and Now Playing,
+live system theme, LaunchAgent autostart. Desktop releases include Linux x86-64 and ARM64 packages;
+signed Android APKs are available from [upstream](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
 
 ```bash
 git clone https://github.com/M1kage-dev/yamusic-rs
@@ -185,9 +188,9 @@ open "target/macos/Яндекс Музыка RS.app"
 ```
 
 Verified on macOS 27.2.1 (Apple Silicon): the `.app` builds and launches, pages load, web fonts
-download, device-code login screen, `cargo test`, `clippy -D warnings`, Keychain roundtrip.
+download, device-code login screen, `cargo test`, `clippy -D warnings`, token-file roundtrip.
 Not verified yet: login from the UI, media keys on a playing track, autostart after reboot.
-No tray, Russian UI only, ad-hoc signature, Intel untested. Updates are installed by the app
+Russian UI only, ad-hoc signature, not tested on an Intel Mac. Updates are installed by the app
 itself: it downloads the `.dmg`, verifies SHA-256 and replaces the bundle after quitting. The
 Yandex token lives in `secrets.json` with `0600` permissions (the Keychain was asking for access
 after every build). Requires Xcode Command Line Tools and Rust 1.92+. GPL-3.0.

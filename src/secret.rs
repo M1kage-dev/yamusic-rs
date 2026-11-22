@@ -248,6 +248,12 @@ pub fn seal(name: &str, plain: &str) -> Option<String> {
     {
         keychain::store(name, plain).then(|| format!("{IN_KEYRING}{name}"))
     }
+    // Android: config.json и так лежит в личной папке приложения, другим приложениям её не прочесть.
+    #[cfg(target_os = "android")]
+    {
+        let _ = (name, plain);
+        None
+    }
 }
 
 /// Достать секрет из конфига; None — чужая учётная запись, нет записи или испорченные данные.
@@ -265,6 +271,11 @@ pub fn open(sealed: &str) -> Option<String> {
     {
         keychain::load(sealed.trim().strip_prefix(IN_KEYRING)?)
     }
+    #[cfg(target_os = "android")]
+    {
+        let _ = sealed;
+        None
+    }
 }
 
 /// Секрет больше не нужен (вышли из аккаунта). DPAPI ничего не хранит, связку ключей чистим.
@@ -273,7 +284,7 @@ pub fn forget(name: &str) {
     keyring::remove(name);
     #[cfg(target_os = "macos")]
     keychain::remove(name);
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "android"))]
     let _ = name;
 }
 

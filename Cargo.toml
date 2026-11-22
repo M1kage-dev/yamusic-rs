@@ -1,6 +1,6 @@
 [package]
 name = "yamusic-rs"
-version = "1.0.6+upstream.1.1.4"
+version = "1.0.7+upstream.1.1.5"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -14,7 +14,8 @@ rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3
 # Системный прокси намеренно не используем (никакой macos-system-configuration): иначе
 # приложение ходит через любой запущенный отладочный прокси вроде Proxyman, зависит от него
 # и отправляет токен лишним хопом. VPN работает и так — он маршрутизирует на уровне сети.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+# SOCKS — для явно заданного ALL_PROXY, без чтения настроек прокси macOS.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"

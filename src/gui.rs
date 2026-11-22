@@ -5,12 +5,13 @@ slint::include_modules!();
 mod history_ui;
 mod landing_ui;
 
+use crate::save::{file_name_max, save_track, saved_already};
 use crate::api::{album_kind_word, Album, Api, Card, Collection, Pin, Playlist, Track};
 use crate::assets::Sprite;
 use crate::config::{log, Config};
 use crate::images::Images;
 use crate::net::{tracks_word, Data, ListData, Net};
-use crate::player::{After, Cmd, ListKind, Player, Repeat, Source, Status};
+use crate::player::{After, Cmd, ListKind, Loudness, Player, Repeat, Source, Status};
 use crate::sys;
 use slint::winit_030::{winit, WinitWindowAccessor};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
@@ -1043,15 +1044,9 @@ impl Ctx {
 
     fn play_wheel(self: &Rc<Self>, i: usize) {
         let Some(w) = self.st.borrow().wheel.get(i).cloned() else { return };
-        let seed = w.seeds.first().cloned().unwrap_or_default();
-        let source = if seed == crate::api::WAVE || seed.is_empty() {
-            Source::Wave
-        } else {
-            let station = match seed.split_once(':') {
-                Some(("artist-tracks", id)) => format!("artist:{id}"),
-                _ => seed,
-            };
-            Source::Seed { station, header: "Моя волна".into(), title: w.name.clone() }
+        let source = match w.station() {
+            Some(station) => Source::Seed { station, header: "Моя волна".into(), title: w.name.clone() },
+            None => Source::Wave,
         };
         self.player.send(Cmd::Wave(source));
         self.start();
@@ -1299,6 +1294,21 @@ fn load_assets() -> Option<Sprite> {
     Sprite::load(&mut src)
 }
 
+/// Сеть до music.yandex.ru бывает медленной, и при запуске шрифты с иконками не успевают
+/// скачаться. Тогда пробуем ещё раз в 20 с и подставляем их без перезапуска (#48).
+fn retry_assets(ui: &AppWindow) {
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_secs(20));
+            let Some(sprite) = load_assets() else { continue };
+            log("шрифты и иконки догрузились");
+            let _ = weak.upgrade_in_event_loop(move |ui| set_icons(&ui, &sprite));
+            return;
+        }
+    });
+}
+
 thread_local! {
     /// Найденный новый релиз — для кнопки «Обновить».
     static UPDATE: RefCell<Option<crate::update::Release>> = const { RefCell::new(None) };
@@ -1528,15 +1538,16 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     };
     let assets = load_assets();
     if assets.is_none() {
-        log("шрифты и иконки недоступны — нет ни оригинала, ни сети");
+        log("шрифты и иконки недоступны — нет ни оригинала, ни сети, пробуем ещё в фоне");
     }
 
     let ui = AppWindow::new()?;
     ui.global::<Theme>().set_dark(true);
     let lite = cfg.mode == "lite";
     apply_mode(&ui, lite);
-    if let Some(sprite) = &assets {
-        set_icons(&ui, sprite);
+    match &assets {
+        Some(sprite) => set_icons(&ui, sprite),
+        None => retry_assets(&ui),
     }
     load_id_icons(&ui);
     crate::update::ENABLED.store(cfg.check_updates, Ordering::Relaxed);
@@ -1545,6 +1556,9 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     crate::api::ALLOW_EXPLICIT.store(cfg.allow_explicit, Ordering::Relaxed);
     let player = Player::spawn(notifier());
     player.send(Cmd::Volume(cfg.volume));
+    if cfg.log_volume {
+        player.send(Cmd::Loudness(Loudness::Decibels));
+    }
     if let Some(t) = cfg.token.clone() {
         player.send(Cmd::Login(t));
     }
@@ -1575,6 +1589,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
     app.set_download_flac(cfg.download_flac);
+    app.set_log_volume(cfg.log_volume);
     app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
     let places = Rc::new(Places::default());
     places.mini.set(cfg.mini_pos.map(|[x, y]| slint::PhysicalPosition::new(x, y)));
@@ -1977,6 +1992,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         #[cfg(target_os = "macos")]
         install_tray(&ui, &player);
     }
+    // Alt+F4 и закрытие из панели задач: Slint сам только прячет окно, а процесс остаётся жить.
+    let weak = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.global::<App>().invoke_close();
+        }
+        slint::CloseRequestResponse::KeepWindowShown
+    });
 
     ui.window().on_winit_window_event(|_w, ev| {
         use slint::winit_030::EventResult;
@@ -2375,29 +2398,6 @@ fn iframe_code(path: &str, w: u32, h: u32, link: &str) -> String {
     )
 }
 
-/// Имя файла или папки, которое Windows точно примет: без запрещённых и управляющих
-/// символов, без точки и пробела в конце, не зарезервированное (CON, NUL, COM1…), не длиннее `max`.
-fn file_name_max(s: &str, max: usize) -> String {
-    let mut out: String = s
-        .chars()
-        .map(|c| if "\\/:*?\"<>|".contains(c) || (c as u32) < 0x20 { '_' } else { c })
-        .collect();
-    if out.chars().count() > max {
-        out = out.chars().take(max).collect();
-    }
-    let out = out.trim_end_matches(['.', ' ']).trim_start().to_string();
-    if out.is_empty() {
-        return "_".into();
-    }
-    let stem = out.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        format!("_{out}")
-    } else {
-        out
-    }
-}
 
 fn file_name(s: &str) -> String {
     file_name_max(s, 100)
@@ -2932,6 +2932,14 @@ impl Ctx {
                 st.cfg.download_dir = dir;
                 st.cfg.save();
             }
+            "log-volume" => {
+                let on = !app.get_log_volume();
+                app.set_log_volume(on);
+                self.player.send(Cmd::Loudness(if on { Loudness::Decibels } else { Loudness::Square }));
+                let mut st = self.st.borrow_mut();
+                st.cfg.log_volume = on;
+                st.cfg.save();
+            }
             "download-flac" => {
                 let on = !app.get_download_flac();
                 app.set_download_flac(on);
@@ -3013,6 +3021,10 @@ impl Ctx {
         }
         if !l.tracks.is_empty() {
             items.push(self.menu_entry("list-playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
+            // У «Мне нравится» скачивание вынесено кнопкой в шапку.
+            if !likes {
+                items.push(self.menu_entry("list-download", "Скачать", icons.get_m_download(), false));
+            }
         }
         items.push(self.menu_entry("list-share", "Поделиться", icons.get_m_share(), true));
         if app.get_list_own() {
@@ -3034,7 +3046,11 @@ impl Ctx {
         let st = self.st.borrow();
         match st.list_key.as_deref()? {
             "likes" => Some(format!("playlist:{}:3", st.uid)),
-            k => Some(k.strip_prefix("artist-tracks:").map_or_else(|| k.to_string(), |id| format!("artist:{id}"))),
+            k => Some(
+                k.strip_prefix("artist-tracks:")
+                    .or_else(|| k.strip_prefix("familiar:"))
+                    .map_or_else(|| k.to_string(), |id| format!("artist:{id}")),
+            ),
         }
     }
 
@@ -3291,6 +3307,7 @@ impl Ctx {
                 }
                 "like" => self.list_like(),
                 "trailer" => self.ui().global::<App>().invoke_list_trailer(),
+                "download" => self.ui().global::<App>().invoke_list_download(),
                 "vibe" => {
                     let Some(data) = self.list() else { return };
                     let Data::List(l) = &*data else { return };
@@ -3939,122 +3956,6 @@ fn music_dir(cfg: &Config) -> std::path::PathBuf {
     sys::music_dir().join("Яндекс Музыка")
 }
 
-/// Расширение по первым байтам: mp3, AAC (ADTS), MP4 или FLAC.
-fn audio_ext(b: &[u8]) -> &'static str {
-    match b {
-        [b'I', b'D', b'3', ..] => "mp3",
-        [_, _, _, _, b'f', b't', b'y', b'p', ..] => "m4a",
-        [b'f', b'L', b'a', b'C', ..] => "flac",
-        [0xFF, x, ..] if x & 0xF6 == 0xF0 => "aac",
-        _ => "mp3",
-    }
-}
-
-fn track_file_stem(t: &Track) -> String {
-    file_name_max(&format!("{} — {}", t.artists, t.title), 120)
-}
-
-/// Трек уже скачан: готовый файл (не `.part`) с ненулевым размером.
-fn saved_already(dir: &std::path::Path, t: &Track) -> bool {
-    let stem = track_file_stem(t);
-    ["mp3", "m4a", "aac", "flac"]
-        .iter()
-        .any(|e| std::fs::metadata(dir.join(format!("{stem}.{e}"))).is_ok_and(|m| m.len() > 0))
-}
-
-/// Скачать трек: сначала в `.part`, теги — в mp3 и FLAC, и только после этого переименовать в
-/// готовое имя. Обрыв оставит лишь `.part`, который следующая попытка перезапишет.
-fn save_track(api: &Api, dir: &std::path::Path, t: &Track, flac: bool) -> Result<std::path::PathBuf, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let stem = track_file_stem(t);
-    let part = dir.join(format!("{stem}.part"));
-    let mut last = String::new();
-    for attempt in 0..3 {
-        if attempt > 0 {
-            std::thread::sleep(Duration::from_secs(2 * attempt));
-        }
-        let url = || {
-            if flac {
-                match api.flac_url(&t.id) {
-                    Ok(Some(u)) => return Ok(u),
-                    Ok(None) => {}
-                    Err(e) => log(format!("flac {}: {e}", t.id)),
-                }
-            }
-            api.stream_url(&t.id)
-        };
-        match url().and_then(|u| api.download_to(&u, &part)) {
-            Ok(n) if n > 0 => {
-                last.clear();
-                break;
-            }
-            Ok(_) => last = "пустой файл".into(),
-            Err(e) => last = e,
-        }
-    }
-    if !last.is_empty() {
-        let _ = std::fs::remove_file(&part);
-        return Err(last);
-    }
-    let finish = || -> Result<std::path::PathBuf, String> {
-        let mut head = [0u8; 16];
-        {
-            use std::io::Read as _;
-            let mut f = std::fs::File::open(&part).map_err(|e| e.to_string())?;
-            let n = f.read(&mut head).map_err(|e| e.to_string())?;
-            if n < head.len() {
-                return Err("файл слишком короткий".into());
-            }
-        }
-        let ext = audio_ext(&head);
-        let path = dir.join(format!("{stem}.{ext}"));
-        let remux = flac && ext == "m4a";
-        let title = if t.version.is_empty() { t.title.clone() } else { format!("{} ({})", t.title, t.version) };
-        let cover = if ext == "mp3" || remux { t.cover_url(400).and_then(|u| api.fetch_bytes(&u).ok()) } else { None };
-        let tags = crate::tags::Tags { title: &title, artist: &t.artists, album: &t.album_title, year: t.year, track: t.position, cover: cover.as_deref() };
-        if remux {
-            let path = dir.join(format!("{stem}.flac"));
-            let tmp = dir.join(format!("{stem}.flac.part"));
-            match crate::flac::from_mp4(&part, &tmp, crate::tags::flac_blocks(&tags)) {
-                Ok(()) => {
-                    let _ = std::fs::remove_file(&part);
-                    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-                    return Ok(path);
-                }
-                // Не разобрали MP4 — сохраним как .m4a, FLAC в нём тоже играется.
-                Err(e) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    log(format!("flac {}: {e}", t.id));
-                }
-            }
-        }
-        if ext == "mp3" {
-            let tag = crate::tags::id3(&tags);
-            let tagged = dir.join(format!("{stem}.tagged.part"));
-            {
-                use std::io::{Read as _, Seek as _, Write as _};
-                let mut src = std::fs::File::open(&part).map_err(|e| e.to_string())?;
-                let mut probe = vec![0u8; 10];
-                let _ = src.read(&mut probe);
-                let skip = crate::tags::existing_id3_len(&probe) as u64;
-                src.seek(std::io::SeekFrom::Start(skip)).map_err(|e| e.to_string())?;
-                let mut out = std::fs::File::create(&tagged).map_err(|e| e.to_string())?;
-                out.write_all(&tag).map_err(|e| e.to_string())?;
-                std::io::copy(&mut src, &mut out).map_err(|e| e.to_string())?;
-                out.sync_all().map_err(|e| e.to_string())?;
-            }
-            let _ = std::fs::remove_file(&part);
-            std::fs::rename(&tagged, &path).map_err(|e| e.to_string())?;
-        } else {
-            std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
-        }
-        Ok(path)
-    };
-    finish().inspect_err(|_| {
-        let _ = std::fs::remove_file(&part);
-    })
-}
-
 /// Колбэки новых экранов: поиск, исполнитель, полноэкранный плеер, меню, настройки звука.
 fn register_extra(app: &App) {
     app.on_open_fullscreen(|m| with_ctx(|c| c.open_fullscreen(m)));
@@ -4300,9 +4201,9 @@ fn register_extra(app: &App) {
     });
     app.on_artist_familiar(|| {
         with_ctx(|c| {
-            let Some((id, name)) = c.current_artist() else { return };
-            c.player.send(Cmd::Wave(Source::Seed { station: format!("artist:{id}"), header: "Моя волна по исполнителю".into(), title: name }));
-            c.start();
+            if let Some((id, _)) = c.current_artist() {
+                c.navigate(Page::List, Some(format!("familiar:{id}")), true);
+            }
         })
     });
 
