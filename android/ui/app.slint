@@ -627,12 +627,25 @@ export component App inherits Window {
         }
     }
 
-    player := Player {
-        width: root.width;
-        height: root.height;
-        open-menu => { menu.open = true; }
-        open-timer => { timer.open = true; }
-        open-quality => { quality.open = true; }
+    // Плеер, листнутый до верха, тянут пальцем вниз, чтобы свернуть.
+    player-swipe := SwipeGestureHandler {
+        enabled: player.open;
+        handle-swipe-down: player.at-top;
+        swiped => {
+            if self.current-position.y - self.pressed-position.y > 120px {
+                player.open = false;
+            }
+        }
+
+        player := Player {
+            width: root.width;
+            height: root.height;
+            dragging: player-swipe.swiping;
+            drag: player-swipe.swiping ? max(0px, player-swipe.current-position.y - player-swipe.pressed-position.y) : 0px;
+            open-menu => { menu.open = true; }
+            open-timer => { timer.open = true; }
+            open-quality => { quality.open = true; }
+        }
     }
     menu := MenuSheet {
         width: root.width;

@@ -132,6 +132,11 @@ export component Player inherits Rectangle {
     in-out property <bool> open;
     in-out property <bool> lyrics-full;
     in-out property <bool> queue-open;
+    // Насколько плеер утянули вниз и тянут ли сейчас.
+    in property <length> drag;
+    in property <bool> dragging;
+    // Лента в самом верху: свайп вниз сворачивает плеер, а не листает.
+    out property <bool> at-top: flick.content-y >= 0 && !root.lyrics-full && !root.queue-open;
     callback open-menu();
     callback open-timer();
     callback open-quality();
@@ -162,9 +167,9 @@ export component Player inherits Rectangle {
     // Плеер уехал вверх вместе с кнопками: внизу появляется плашка.
     property <bool> mini: flick.content-y < -(root.base + 210px);
 
-    y: root.open ? 0 : root.height;
+    y: root.open ? root.drag : root.height;
     animate y {
-        duration: 300ms;
+        duration: root.dragging ? 0ms : 300ms;
         easing: ease-out;
     }
     visible: self.y < root.height - 1px;
@@ -183,12 +188,26 @@ export component Player inherits Rectangle {
             width: root.body-width;
             height: flick.content-height;
 
-            if !Now.lyrics-mode || !Now.has-lyrics: TouchArea {
+            // Обложку листают вбок: влево следующий трек, вправо предыдущий.
+            if !Now.lyrics-mode || !Now.has-lyrics: flip := SwipeGestureHandler {
+                property <length> shift: self.swiping ? self.current-position.x - self.pressed-position.x : 0px;
                 x: root.side;
                 y: root.art-y;
                 width: root.art-size;
                 height: root.art-size;
+                handle-swipe-left: true;
+                handle-swipe-right: true;
+                swiped => {
+                    if self.current-position.x - self.pressed-position.x < -80px {
+                        Now.next();
+                    } else if self.current-position.x - self.pressed-position.x > 80px {
+                        Now.prev();
+                    }
+                }
                 Cover {
+                    x: flip.shift;
+                    animate x { duration: flip.swiping ? 0ms : 200ms; }
+                    opacity: 1 - min(0.6, abs(flip.shift) / root.art-size);
                     source: Now.cover-big;
                     radius: 12px;
                 }
