@@ -181,6 +181,9 @@ export component App inherits Window {
 
     // Шаг колеса волн: расстояние между центрами соседних карточек.
     out property <length> wheel-spacing: 131px;
+    // Колесо крутится по кругу: лента на сотни оборотов, начало в её середине.
+    out property <int> wheel-laps: 400;
+    out property <length> wheel-home: -(root.wheel-laps / 2 * root.wheel.length + 1) * root.wheel-spacing;
 
     if !root.logged-in: LoginScreen {
         width: root.width;
@@ -468,17 +471,25 @@ export component App inherits Window {
             width: wave.width - self.x;
             height: max(0px, wave.height - self.y);
             property <float> curve: clamp((self.height - 126px) / 150px, 0, 1);
-            content-width: self.width + max(0, root.wheel.length - 1) * root.wheel-spacing;
+            content-width: self.width + max(0, root.wheel-laps * root.wheel.length - 1) * root.wheel-spacing;
             content-height: self.height;
             content-x <=> root.wheel-offset;
+            property <int> n: root.wheel.length;
+            property <int> slot-count: ceil(self.width / root.wheel-spacing) + 3;
+            property <int> first: floor(-self.content-x / root.wheel-spacing) - ceil(self.slot-count / 2);
 
-            for card[i] in root.wheel: card-box := Rectangle {
+            // Слотов столько, сколько влезает на экран. Слот держит свой номер, пока виден,
+            // и уходя за край, перескакивает на другую сторону.
+            for k in (n > 0 ? slot-count : 0): card-box := Rectangle {
+                property <int> ordinal: k + ceil((wheel-flick.first - k) / wheel-flick.slot-count) * wheel-flick.slot-count;
+                property <int> idx: mod(mod(self.ordinal, wheel-flick.n) + wheel-flick.n, wheel-flick.n);
+                property <WheelCard> card: root.wheel[self.idx];
                 // Сдвиг от центра экрана в dp и подъём по дуге радиуса 277.5 dp.
-                property <float> d: abs((i * root.wheel-spacing + wheel-flick.content-x) / 1px);
+                property <float> d: abs((self.ordinal * root.wheel-spacing + wheel-flick.content-x) / 1px);
                 property <float> arc: min(self.d, 277);
                 property <float> scale: 1 - 0.107 * min(self.d / 131, 1);
                 property <length> size: 64px * self.scale;
-                x: wheel-flick.width / 2 + i * root.wheel-spacing - 67px;
+                x: wheel-flick.width / 2 + self.ordinal * root.wheel-spacing - 67px;
                 // Центр обложки на 40 px ниже верха карточки.
                 y: 8px + wheel-flick.curve * (8.8 + 277.5 - sqrt(277.5 * 277.5 - self.arc * self.arc)) * 1px;
                 width: 134px;
@@ -488,20 +499,20 @@ export component App inherits Window {
                     y: 47px;
                     width: 134px;
                     height: 160px;
-                    source: card.blob;
+                    source: card-box.card.blob;
                 }
                 Rectangle {
                     x: (parent.width - parent.size) / 2;
                     y: 40px - parent.size / 2;
                     width: parent.size;
                     height: parent.size;
-                    border-radius: card.round ? self.width / 2 : 8px * parent.scale;
+                    border-radius: card-box.card.round ? self.width / 2 : 8px * parent.scale;
                     clip: true;
                     background: #ffffff14;
                     Image {
                         width: parent.width;
                         height: parent.height;
-                        source: card.cover;
+                        source: card-box.card.cover;
                         image-fit: cover;
                     }
                 }
@@ -510,7 +521,7 @@ export component App inherits Window {
                     y: 40px - parent.size / 2;
                     width: parent.size;
                     height: parent.size;
-                    border-radius: card.round ? self.width / 2 : 8px * parent.scale;
+                    border-radius: card-box.card.round ? self.width / 2 : 8px * parent.scale;
                     border-width: 1px;
                     border-color: #ffffff33;
                 }
@@ -520,8 +531,8 @@ export component App inherits Window {
                     width: 124px;
                     alignment: start;
                     spacing: 2px;
-                    if card.description != "": Text {
-                        text: card.description;
+                    if card-box.card.description != "": Text {
+                        text: card-box.card.description;
                         color: #ffffff80;
                         font-size: 12px * card-box.scale;
                         font-weight: 500;
@@ -529,7 +540,7 @@ export component App inherits Window {
                         overflow: elide;
                     }
                     Text {
-                        text: card.name;
+                        text: card-box.card.name;
                         color: #fff;
                         font-size: 15px * card-box.scale;
                         font-weight: 500;
@@ -540,7 +551,7 @@ export component App inherits Window {
                     }
                 }
                 TouchArea {
-                    clicked => { root.play-wheel(i); }
+                    clicked => { root.play-wheel(card-box.idx); }
                 }
             }
         }
