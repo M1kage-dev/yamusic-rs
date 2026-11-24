@@ -150,7 +150,15 @@ fn run() -> Result<(), slint::PlatformError> {
     let shader = match original::Apk::open_installed() {
         Some(mut apk) => {
             original::register_fonts(&mut apk);
-            set_icons(&ui, load_icons(|name| apk.icon(name).and_then(|svg| slint::Image::load_from_svg_data(svg.as_bytes()).ok())));
+            // В другой версии оригинала иконку могут переименовать: тогда берём её из веб-версии.
+            let mut sprite = None;
+            set_icons(&ui, load_icons(|name| {
+                apk.icon(name).and_then(|svg| slint::Image::load_from_svg_data(svg.as_bytes()).ok()).or_else(|| {
+                    log(format!("иконки {name} нет в оригинале, берём с music.yandex.ru"));
+                    let sprite = sprite.get_or_insert_with(|| crate::assets::Sprite::load(&mut crate::assets::Source::open()));
+                    web_icon(sprite.as_ref()?, name)
+                })
+            }));
             original::wave_shader(&mut apk)
         }
         None => {
@@ -589,18 +597,21 @@ fn load_web_assets(ui: &App) {
         log("спрайт иконок music.yandex.ru не скачался");
         return;
     };
+    set_icons(ui, load_icons(|name| web_icon(&sprite, name)));
+}
+
+/// Иконка по имени из оригинала: своя или из спрайта веб-версии.
+fn web_icon(sprite: &crate::assets::Sprite, name: &str) -> Option<slint::Image> {
+    if let Some((_, svg)) = OWN_ICONS.iter().find(|(android, _)| *android == name) {
+        return slint::Image::load_from_svg_data(svg.as_bytes()).ok();
+    }
+    let id = WEB_ICONS.iter().find(|(android, _)| *android == name)?.1;
     let vars = std::collections::HashMap::from([
         ("--ym-logo-color-primary-back", "transparent"),
         ("--ym-logo-text-color", "#fff"),
         ("currentColor", "#fff"),
     ]);
-    set_icons(ui, load_icons(|name| {
-        if let Some((_, svg)) = OWN_ICONS.iter().find(|(android, _)| *android == name) {
-            return slint::Image::load_from_svg_data(svg.as_bytes()).ok();
-        }
-        let id = WEB_ICONS.iter().find(|(android, _)| *android == name)?.1;
-        Some(sprite.image(id, &vars))
-    }));
+    Some(sprite.image(id, &vars))
 }
 
 /// Иконки, для которых в спрайте веб-версии нет похожих.
