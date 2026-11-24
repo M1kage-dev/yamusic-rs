@@ -220,7 +220,8 @@ impl Wave {
     ///
     /// # Safety
     /// Вызывать только из колбэка отрисовки Slint, где контекст GL текущий.
-    pub unsafe fn draw(&mut self, width: u32, height: u32) {
+    /// `shift` сдвигает центр пятна по горизонтали, в пикселях экрана.
+    pub unsafe fn draw(&mut self, width: u32, height: u32, shift: i32) {
         if width == 0 || height == 0 {
             return;
         }
@@ -228,7 +229,9 @@ impl Wave {
 
         let saved = self.save();
         let gl = &self.gl;
-        let (w, h) = (width as i32, height as i32);
+        // Со сдвигом кадр волны шире экрана, чтобы его центр встал куда надо, а края не обрезались.
+        let (w, h) = (width as i32 + 2 * shift.abs(), height as i32);
+        let left = shift.min(0) * 2;
         let (tw, th) = ((w / DOWNSCALE).max(1), (h / DOWNSCALE).max(1));
         if self.target.as_ref().is_none_or(|t| t.width != tw || t.height != th) {
             if let Some(old) = self.target.take() {
@@ -281,7 +284,7 @@ impl Wave {
 
         // Растянуть на экран с билинейной фильтрацией.
         gl.bind_framebuffer(glow::FRAMEBUFFER, native(saved.framebuffer as i32).map(glow::NativeFramebuffer));
-        gl.viewport(0, 0, w, h);
+        gl.viewport(left, 0, w, h);
         gl.use_program(Some(self.blit));
         gl.active_texture(glow::TEXTURE0);
         if saved.sampler.is_some() {

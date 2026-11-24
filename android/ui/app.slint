@@ -158,6 +158,8 @@ export component App inherits Window {
 
     property <bool> rail: root.width >= 600px && root.height >= 300px;
     property <bool> wide-wave: root.width >= 540px && root.width > root.height;
+    // Лёжа на планшете заголовок волны в левой колонке, и пятно встаёт над ним, а не посреди экрана.
+    out property <length> wave-shift: root.wide-wave ? root.rail-width + min(600px, (root.width - root.rail-width) * 0.52) / 2 - root.width / 2 : 0px;
     property <length> rail-width: root.rail ? 88px : 0px;
     property <length> nav-height: root.rail ? 0px : 83.8px;
     property <length> page-bottom: root.nav-height + (Now.has-track ? 84px : 16px);

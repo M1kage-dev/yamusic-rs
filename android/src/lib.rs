@@ -734,7 +734,8 @@ fn install_wave(ui: &App, fragment: String, wave: Rc<RefCell<Option<wave_gl::Wav
             let Some(ui) = weak.upgrade() else { return };
             if let Some(w) = wave.borrow_mut().as_mut() {
                 let size = ui.window().size();
-                unsafe { w.draw(size.width, size.height) };
+                let shift = (ui.get_wave_shift() * ui.window().scale_factor()).round() as i32;
+                unsafe { w.draw(size.width, size.height, shift) };
                 if w.animating() {
                     ui.window().request_redraw();
                 }
