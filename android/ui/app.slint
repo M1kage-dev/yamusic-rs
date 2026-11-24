@@ -474,6 +474,8 @@ export component App inherits Window {
             content-width: self.width + max(0, root.wheel-laps * root.wheel.length - 1) * root.wheel-spacing;
             content-height: self.height;
             content-x <=> root.wheel-offset;
+            property <duration> moved-at;
+            changed content-x => { self.moved-at = animation-tick(); }
             property <int> n: root.wheel.length;
             property <int> slot-count: ceil(self.width / root.wheel-spacing) + 3;
             property <int> first: floor(-self.content-x / root.wheel-spacing) - ceil(self.slot-count / 2);
@@ -551,7 +553,19 @@ export component App inherits Window {
                     }
                 }
                 TouchArea {
-                    clicked => { root.play-wheel(card-box.idx); }
+                    // Волну включает только тап на месте: не тот, которым остановили прокрутку колеса,
+                    // и не провёл пальцем вверх-вниз.
+                    property <bool> stops-scroll;
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            self.stops-scroll = animation-tick() - wheel-flick.moved-at < 250ms;
+                        }
+                    }
+                    clicked => {
+                        if !self.stops-scroll && abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px {
+                            root.play-wheel(card-box.idx);
+                        }
+                    }
                 }
             }
         }
