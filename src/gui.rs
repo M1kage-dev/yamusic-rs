@@ -2138,7 +2138,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     let weak = ui.as_weak();
     app.on_minimize(move || {
         if let Some(ui) = weak.upgrade() {
-            ui.window().set_minimized(true);
+            sys::minimize(ui.window());
         }
     });
     // Как у оригинала на Windows: пока играет трек, окно прячется в трей, иначе приложение закрывается.

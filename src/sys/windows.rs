@@ -53,6 +53,10 @@ pub fn is_shown(w: &slint::Window) -> bool {
     hwnd != 0 && is_visible(hwnd)
 }
 
+pub fn minimize(w: &slint::Window) {
+    w.set_minimized(true);
+}
+
 pub fn is_minimized(w: &slint::Window) -> bool {
     is_iconic(handle(w))
 }
