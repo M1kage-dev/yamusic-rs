@@ -1,5 +1,6 @@
 // Светлые страницы: каждая — список блоков, вид блока задаёт kind.
 
+import { ListView } from "std-widgets.slint";
 import { Icons, Now, Cover, T } from "common.slint";
 import { Prof } from "profile.slint";
 
@@ -63,6 +64,8 @@ export global Pages {
     in-out property <string> query;
     callback card(int, int);
     callback track(int, int);
+    // Блок появился на экране: пора грузить его картинки.
+    callback appeared(int);
     callback more(int);
     callback chip(int, int);
     // Кнопки шапок: блок и номер кнопки.
@@ -748,6 +751,8 @@ component BlockView inherits Rectangle {
         : root.kind == K.likes-head ? 108px
         : 0;
     height: root.top + root.body;
+    init => { Pages.appeared(root.index); }
+    changed index => { Pages.appeared(root.index); }
 
     if root.has-heading: Heading {
         y: 0;
@@ -1571,44 +1576,48 @@ export component PageView inherits Rectangle {
     property <length> bar-h: 56px;
     TouchArea { }
 
-    flick := Flickable {
+    list := ListView {
         y: root.page.overlay ? 0 : root.bar-y + root.bar-h;
         height: root.height - self.y;
         content-y <=> Pages.scroll;
-        content-width: self.width;
-        content-height: col.preferred-height + root.bottom;
-        col := VerticalLayout {
-            x: (flick.width - self.width) / 2;
-            width: min(flick.width, 1120px);
-            alignment: start;
-            for b[i] in root.page.blocks: BlockView {
+        mouse-drag-pan-enabled: true;
+        for b[i] in root.page.blocks: Rectangle {
+            height: blk.height + (i == root.page.blocks.length - 1 ? root.bottom : 0);
+            blk := BlockView {
+                x: (parent.width - self.width) / 2;
+                y: 0;
+                width: min(parent.width, 1120px);
                 block: b;
                 index: i;
                 icons: root.icons;
             }
-            if root.page.loading: Text {
-                height: 160px;
-                text: "Загружаем…";
-                color: T.fg.with-alpha(0.40);
-                font-size: 16px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            if root.page.error != "": Text {
-                height: 160px;
-                text: root.page.error;
-                color: T.fg.with-alpha(0.50);
-                font-size: 15px;
-                wrap: word-wrap;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
         }
+    }
+    if root.page.loading: Text {
+        y: list.y;
+        height: 160px;
+        text: "Загружаем…";
+        color: T.fg.with-alpha(0.40);
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.page.error != "": Text {
+        x: 16px;
+        y: list.y;
+        width: root.width - 32px;
+        height: 160px;
+        text: root.page.error;
+        color: T.fg.with-alpha(0.50);
+        font-size: 15px;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 
     // Шапка: над фото исполнителя прозрачная, пока страницу не прокрутили.
     property <length> head-h: root.page.blocks.length > 0 && root.page.blocks[0].kind == K.album-head ? 532px : min(root.width * 1.39, 580px);
-    property <bool> solid: !root.page.overlay || -flick.content-y > root.head-h - root.bar-y - root.bar-h - 40px;
+    property <bool> solid: !root.page.overlay || -list.content-y > root.head-h - root.bar-y - root.bar-h - 40px;
     Rectangle {
         y: 0;
         height: root.bar-y + root.bar-h;
