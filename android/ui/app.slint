@@ -201,7 +201,7 @@ export component App inherits Window {
         height: root.height - root.nav-height;
         visible: !Pages.shown;
 
-        property <length> header-y: self.height < 680px ? 24px : 58px;
+        property <length> header-y: self.height < 680px ? 24px : T.top + 6px;
         property <length> portrait-offset: root.rail && !root.wide-wave ? clamp((self.height - 850px) / 2, 0px, 180px) : 0px;
         property <length> wheel-y: root.wide-wave ? max(76px, (self.height - 176px) / 2) : min(600px + portrait-offset, max(202px, self.height - 148px));
         property <length> track-y: root.wide-wave ? min(450.3px, self.height - 68px) : min(450.3px + portrait-offset, wheel-y - 64px);

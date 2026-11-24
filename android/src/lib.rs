@@ -149,6 +149,9 @@ fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
 fn run() -> Result<(), slint::PlatformError> {
     let ui = App::new()?;
     let _ = UI.set(ui.as_weak());
+    if let Some(top) = sys::status_bar_height() {
+        ui.global::<T>().set_top(top);
+    }
     let shader = match original::Apk::open_installed() {
         Some(mut apk) => {
             original::register_fonts(&mut apk);

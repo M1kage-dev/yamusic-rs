@@ -23,7 +23,7 @@
         android:hasCode="true"
         android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true"
-        android:theme="@android:style/Theme.Black.NoTitleBar">
+        android:theme="@style/App">
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"

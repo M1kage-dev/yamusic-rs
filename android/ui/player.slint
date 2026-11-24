@@ -1,7 +1,7 @@
 // Полный плеер, как в мобильном клиенте: обложка или текст, кнопки, исполнитель, похожие
 // треки, плейлисты, таймер и звук. Координаты в dp сняты с оригинала на экране 411 dp.
 
-import { Now, IconButton, SkipIcon, DeviceIcon, CollapseIcon, Cover, TrackRow } from "common.slint";
+import { Now, IconButton, SkipIcon, DeviceIcon, CollapseIcon, Cover, TrackRow, T } from "common.slint";
 
 /// Кнопка 72×48 под плеером: повтор, текст, таймер, звук.
 component PillButton inherits Rectangle {
@@ -155,7 +155,7 @@ export component Player inherits Rectangle {
     property <length> art-size: root.split ? min(420px, root.body-width * 0.42, max(144px, root.height - 104px)) : root.w;
     property <length> controls-y: root.split ? max(root.art-y, root.art-y + (root.art-size - 300px) / 2) : root.art-y + root.art-size;
     property <length> base: root.split ? max(root.controls-y, root.art-y + root.art-size - 298px) : root.controls-y;
-    property <length> header-y: root.split ? 20px : 52px;
+    property <length> header-y: root.split ? 20px : T.top;
     property <length> queue-y: root.header-y + 48px;
     property <length> lyrics-width: min(root.width - 48px, 720px);
     property <length> lyrics-y: root.split ? 76px : 112px;

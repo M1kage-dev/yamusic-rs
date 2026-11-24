@@ -340,6 +340,8 @@ export component QualityOption inherits Rectangle {
 export global T {
     in property <string> display-font: "YS Display";
     in property <bool> dark;
+    // Высота статус-бара: окно лежит под ним.
+    in property <length> top: 52px;
     out property <color> bg: root.dark ? #000 : #fff;
     out property <color> fg: root.dark ? #fff : #000;
     out property <color> card: root.dark ? #141414 : #f5f5f5;
