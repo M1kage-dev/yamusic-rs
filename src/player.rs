@@ -110,6 +110,8 @@ pub enum Cmd {
     LikeTrack(Track, Option<LikeCompleted>),
     Dislike,
     Wave(Source),
+    /// Заново начать «Мою волну» с настройками (seeds `setting…`).
+    TuneWave(Vec<String>),
     PlayList { source: Source, tracks: Vec<Track>, start: usize, after: After },
     /// Перейти к треку из очереди (индекс в `upcoming`).
     Jump(usize),
@@ -412,6 +414,8 @@ struct Engine {
     clone_pending: bool,
     /// Последний трек волны с прошлого запуска — queue для клона.
     restore_last: Option<String>,
+    /// Настройки, с которыми начать следующую сессию «Моей волны».
+    tune: Option<Vec<String>>,
     /// Текущее прослушивание для `/plays`.
     listen: Option<Listen>,
     fetching: bool,
@@ -478,6 +482,7 @@ impl Engine {
             played_station: String::new(),
             wave_restored: false,
             clone_pending: false,
+            tune: None,
             restore_last: None,
             listen: None,
             fetching: false,
@@ -1139,6 +1144,16 @@ impl Engine {
                 self.advance(End::Dislike);
             }
             Cmd::Wave(src) => self.start_wave(src, true),
+            Cmd::TuneWave(settings) => {
+                self.start_wave(Source::Wave, false);
+                self.session.clear();
+                self.clone_pending = false;
+                self.restore_last = None;
+                // Сессию с прошлого запуска уже не подхватывать: волна начинается заново.
+                self.wave_restored = true;
+                self.tune = Some(settings);
+                self.fetch_batch_with(true);
+            }
             Cmd::PlayList { source, tracks, start, after } => {
                 if tracks.is_empty() {
                     return;
@@ -1292,7 +1307,9 @@ impl Engine {
                 self.restore_wave();
             }
         }
-        let (session, queue) = if self.session.is_empty() {
+        let (session, queue) = if let Some(settings) = self.tune.take() {
+            (WaveSession::Tuned(settings), Vec::new())
+        } else if self.session.is_empty() {
             (WaveSession::New, if replace { Vec::new() } else { self.rotor_queue() })
         } else if self.clone_pending {
             (WaveSession::Clone(self.session.clone()), self.restore_last.clone().into_iter().collect())

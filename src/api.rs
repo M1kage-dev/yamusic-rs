@@ -230,8 +230,26 @@ pub struct Lyrics {
 /// Откуда брать следующий пакет волны.
 pub enum WaveSession {
     New,
+    /// Новая «Моя волна» с этими настройками (seeds `setting…`).
+    Tuned(Vec<String>),
     Next(String),
     Clone(String),
+}
+
+/// Группа настроек «Моей волны»: «По характеру», «Под настроение» или «По языку».
+#[derive(Clone, Debug)]
+pub struct WaveSettingGroup {
+    pub name: String,
+    pub options: Vec<WaveSettingOption>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WaveSettingOption {
+    pub name: String,
+    pub seed: String,
+    pub image: Option<String>,
+    /// «Любое»: настройка не задана.
+    pub any: bool,
 }
 
 pub struct Batch {
@@ -1323,7 +1341,7 @@ impl Api {
     /// перезапуска: сервер заводит новую сессию с историей старой. Если сессия истекла или
     /// её нет, начинается новая.
     pub fn wave_session(&self, station: &str, session: WaveSession, queue: &[String], feedbacks: &[Value]) -> Res<Batch> {
-        match session {
+        match &session {
             WaveSession::Next(id) => {
                 let mut body = json!({ "queue": queue });
                 if !feedbacks.is_empty() {
@@ -1352,11 +1370,14 @@ impl Api {
                     Err(e) => crate::config::log(format!("сессия {id}: {e}, начинаем новую")),
                 }
             }
-            WaveSession::New => {}
+            WaveSession::New | WaveSession::Tuned(_) => {}
         }
         let mut seeds = vec![station.to_string()];
         if station == WAVE {
-            seeds.extend(self.wave_settings());
+            match session {
+                WaveSession::Tuned(settings) => seeds.extend(settings.into_iter().filter(|s| !s.is_empty())),
+                _ => seeds.extend(self.wave_settings()),
+            }
         }
         let mut body = json!({
             "seeds": seeds,
@@ -1391,7 +1412,7 @@ impl Api {
 
     /// Настройки «Моей волны» («По характеру», «Под настроение», «По языку»), выбранные в любом
     /// клиенте: seeds `setting…` последней волны, если это была «Моя волна».
-    fn wave_settings(&self) -> Vec<String> {
+    pub fn wave_settings(&self) -> Vec<String> {
         let v = match self.get("/rotor/wave/last", &[]) {
             Ok(v) => v,
             Err(e) => {
@@ -1410,6 +1431,30 @@ impl Api {
         } else {
             Vec::new()
         }
+    }
+
+    /// Какие настройки есть у «Моей волны»: названия, картинки и seeds приходят с сервера.
+    pub fn wave_setting_groups(&self) -> Res<Vec<WaveSettingGroup>> {
+        let v = self.get("/rotor/wave/settings", &[])?;
+        let all = v.get("settingRestrictions").ok_or("нет settingRestrictions")?;
+        let groups = ["diversity", "moodEnergy", "language"]
+            .iter()
+            .filter_map(|key| all.get(*key))
+            .map(|g| WaveSettingGroup {
+                name: str_of(g, "name"),
+                options: g
+                    .get("possibleValues")
+                    .and_then(|a| a.as_array())
+                    .map(|a| a.iter().map(|o| WaveSettingOption {
+                        name: str_of(o, "name"),
+                        seed: str_of(o, "serializedSeed"),
+                        image: o.get("imageUrl").and_then(|u| u.as_str()).map(String::from),
+                        any: o.get("unspecified").and_then(|u| u.as_bool()).unwrap_or(false),
+                    }).collect())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Ok(groups)
     }
 
     /// Отправить фидбек сессии (тело из [`session_event`]).

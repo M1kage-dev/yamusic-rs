@@ -81,6 +81,8 @@ struct State {
     vibe_key: Option<(bool, Option<[u8; 3]>)>,
     /// Анимация пятна: таймер есть, только пока волна играет на экране.
     trailer: Option<Trailer>,
+    /// Настройки «Моей волны» с сервера, выбранный вариант в каждой группе и картинки вариантов.
+    wave_tune: Vec<(crate::api::WaveSettingGroup, usize, Vec<Image>)>,
     downloading: bool,
 }
 
@@ -1082,6 +1084,80 @@ impl Ctx {
         self.start();
     }
 
+    /// Панель настроек «Моей волны»: варианты приходят с сервера, выбранные — из последней волны
+    /// в любом клиенте.
+    fn open_wave_settings(self: &Rc<Self>) {
+        let Some(net) = self.st.borrow().net.clone() else { return };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.global::<App>().set_wave_settings_open(true);
+        }
+        std::thread::spawn(move || {
+            let groups = net.api.wave_setting_groups();
+            let current = net.api.wave_settings();
+            let _ = slint::invoke_from_event_loop(move || {
+                with_ctx(|c| match groups {
+                    Ok(groups) => c.set_wave_settings(groups, &current),
+                    Err(e) => log(format!("rotor/wave/settings: {e}")),
+                })
+            });
+        });
+    }
+
+    fn set_wave_settings(self: &Rc<Self>, groups: Vec<crate::api::WaveSettingGroup>, current: &[String]) {
+        let tune: Vec<_> = groups
+            .into_iter()
+            .map(|g| {
+                let chosen = g
+                    .options
+                    .iter()
+                    .position(|o| current.contains(&o.seed))
+                    .or_else(|| g.options.iter().position(|o| o.any))
+                    .unwrap_or(0);
+                let images = vec![Image::default(); g.options.len()];
+                (g, chosen, images)
+            })
+            .collect();
+        let urls: Vec<(usize, usize, String)> = tune
+            .iter()
+            .enumerate()
+            .flat_map(|(gi, (g, _, _))| g.options.iter().enumerate().filter_map(move |(oi, o)| Some((gi, oi, o.image.clone()?))))
+            .collect();
+        self.st.borrow_mut().wave_tune = tune;
+        self.show_wave_settings();
+        for (gi, oi, url) in urls {
+            self.images.get(&url, 48, move |img| {
+                with_ctx(|c| {
+                    if let Some(slot) = c.st.borrow_mut().wave_tune.get_mut(gi).and_then(|e| e.2.get_mut(oi)) {
+                        *slot = img.clone();
+                    }
+                    c.show_wave_settings();
+                })
+            });
+        }
+    }
+
+    fn show_wave_settings(&self) {
+        let Some(ui) = self.ui.upgrade() else { return };
+        let groups: Vec<WaveSettingGroup> = self
+            .st
+            .borrow()
+            .wave_tune
+            .iter()
+            .map(|(g, chosen, images)| WaveSettingGroup {
+                name: g.name.as_str().into(),
+                options: ModelRc::new(VecModel::from(
+                    g.options
+                        .iter()
+                        .zip(images)
+                        .enumerate()
+                        .map(|(i, (o, image))| WaveOption { name: o.name.as_str().into(), image: image.clone(), selected: i == *chosen })
+                        .collect::<Vec<_>>(),
+                )),
+            })
+            .collect();
+        ui.global::<App>().set_wave_settings(ModelRc::new(VecModel::from(groups)));
+    }
+
     /// Пользователь что-то включил: показать плеер и снять с паузы.
     fn start(self: &Rc<Self>) {
         self.st.borrow_mut().started = true;
@@ -1763,6 +1839,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             blob_requested: false,
             vibe_key: None,
             trailer: None,
+            wave_tune: Vec::new(),
             downloading: false,
         }),
     });
@@ -4313,6 +4390,26 @@ fn register_extra(app: &App) {
                 }
             }
             c.apply_eq();
+        })
+    });
+    app.on_open_wave_settings(|| with_ctx(|c| c.open_wave_settings()));
+    app.on_tune_wave(|group, option| {
+        with_ctx(|c| {
+            let settings = {
+                let mut st = c.st.borrow_mut();
+                let Some(entry) = st.wave_tune.get_mut(group.max(0) as usize) else { return };
+                entry.1 = (option.max(0) as usize).min(entry.0.options.len().saturating_sub(1));
+                st.wave_tune
+                    .iter()
+                    .filter_map(|(g, chosen, _)| g.options.get(*chosen))
+                    .filter(|o| !o.any)
+                    .map(|o| o.seed.clone())
+                    .collect()
+            };
+            c.show_wave_settings();
+            c.st.borrow_mut().trailer = None;
+            c.player.send(Cmd::TuneWave(settings));
+            c.start();
         })
     });
     app.on_reset_wave(|| {

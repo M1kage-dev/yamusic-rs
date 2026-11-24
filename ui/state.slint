@@ -128,6 +128,18 @@ export struct MenuEntry {
     submenu: bool,
 }
 
+export struct WaveOption {
+    name: string,
+    image: image,
+    selected: bool,
+}
+
+// Группа настроек «Моей волны»: «По характеру», «Под настроение», «По языку».
+export struct WaveSettingGroup {
+    name: string,
+    options: [WaveOption],
+}
+
 export struct WheelEntry {
     name: string,
     description: string,
@@ -216,6 +228,8 @@ export global App {
     in property <string> source-title;
     // Волна по треку, исполнителю, вайбу: над пятном «челка» с крестиком.
     in property <bool> wave-context;
+    in property <[WaveSettingGroup]> wave-settings;
+    in-out property <bool> wave-settings-open;
     in property <[string]> artist-list;
     in property <string> artists-longest;
     // Фаза анимации пятна, секунды; идёт только во время игры на странице волны.
@@ -466,6 +480,8 @@ export global App {
     callback open-current-album();
     callback open-current-artist(int);
     callback reset-wave();
+    callback open-wave-settings();
+    callback tune-wave(int, int);
     callback go-forward();
     callback row-open-album(string, int);
     callback row-open-artist(string, int, int);
