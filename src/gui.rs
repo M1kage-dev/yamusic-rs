@@ -241,6 +241,7 @@ impl Ctx {
         app.set_likes_revision(s.likes_revision);
         app.set_loading(s.loading);
         app.set_position(s.position);
+        app.set_track_format(s.format.as_str().into());
         app.set_duration(s.duration);
         app.set_volume(s.volume);
         app.set_shuffle(s.shuffle);

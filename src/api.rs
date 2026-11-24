@@ -1708,13 +1708,14 @@ impl Api {
 
     // ---------- аудио ----------
 
-    /// Прямая ссылка на аудио: сначала download-info (mp3 до 320), потом get-file-info.
-    pub fn stream_url(&self, track_id: &str) -> Res<String> {
+    /// Прямая ссылка на аудио и его формат («MP3 320»): сначала download-info (mp3 до 320),
+    /// потом get-file-info.
+    pub fn stream_url(&self, track_id: &str) -> Res<(String, String)> {
         match self.stream_url_legacy(track_id) {
             Ok(u) => Ok(u),
             Err(e1) => self
                 .file_info(track_id, "nq", "mp3,aac,he-aac")
-                .map(|(_, u)| u)
+                .map(|(codec, u)| (u, codec.replace("he-", "HE-").to_uppercase()))
                 .map_err(|e2| format!("download-info: {e1}; get-file-info: {e2}")),
         }
     }
@@ -1725,7 +1726,7 @@ impl Api {
         Ok(codec.starts_with("flac").then_some(url))
     }
 
-    fn stream_url_legacy(&self, track_id: &str) -> Res<String> {
+    fn stream_url_legacy(&self, track_id: &str) -> Res<(String, String)> {
         let v = self.get(&format!("/tracks/{track_id}/download-info"), &[])?;
         let arr = v.as_array().ok_or("пустой download-info")?;
         let key = |x: &&Value| {
@@ -1734,7 +1735,7 @@ impl Api {
                 x.get("bitrateInKbps").and_then(|b| b.as_u64()).unwrap_or(0),
             )
         };
-let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == Some("mp3"));
+        let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == Some("mp3"));
         let full = |x: &&Value| !x.get("preview").and_then(|p| p.as_bool()).unwrap_or(false);
         let bitrate = |x: &&Value| x.get("bitrateInKbps").and_then(|b| b.as_u64()).unwrap_or(0);
         let pick = match QUALITY.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1745,6 +1746,11 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         .or_else(|| mp3().max_by_key(key))
         .or_else(|| arr.iter().max_by_key(key))
         .ok_or("нет вариантов загрузки")?;
+        let codec = pick.get("codec").and_then(|c| c.as_str()).unwrap_or("mp3").to_uppercase();
+        let format = match bitrate(&pick) {
+            0 => codec,
+            kbps => format!("{codec} {kbps}"),
+        };
         let info_url = pick.get("downloadInfoUrl").and_then(|u| u.as_str()).ok_or("нет downloadInfoUrl")?;
         if !reqwest::Url::parse(info_url).is_ok_and(|u| token_allowed(&u)) {
             return Err("download-info: адрес не на сервере Яндекса".into());
@@ -1759,7 +1765,7 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
         let sg = xml_tag(&xml, "s")?;
         let digest = Md5::digest(format!("{MP3_SALT}{}{sg}", path.get(1..).unwrap_or("")).as_bytes());
         let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        Ok(format!("https://{host}/get-mp3/{hash}/{ts}{path}"))
+        Ok((format!("https://{host}/get-mp3/{hash}/{ts}{path}"), format))
     }
 
     /// Кодек и ссылка из get-file-info.

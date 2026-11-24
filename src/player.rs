@@ -88,6 +88,8 @@ pub struct Shared {
     pub error: Option<(String, Instant)>,
     /// Трек продолжен с того места, где его оставили в прошлый раз: плеер виден сразу, на паузе.
     pub resumed: bool,
+    /// Формат играющего файла: «MP3 320», «AAC».
+    pub format: String,
 }
 
 /// Как положение ползунка громкости переводится в усиление.
@@ -294,7 +296,8 @@ fn round3(x: f64) -> f64 {
 }
 
 /// Трек, который качается, и декодер, уже прочитавший его начало.
-type Audio = (Arc<Buf>, Decoder<Reader>);
+/// Скачиваемый трек, его декодер и формат («MP3 320»).
+type Audio = (Arc<Buf>, Decoder<Reader>, String);
 
 /// Имя выхода Windows по умолчанию. На Linux звук идёт в «default», и за сменой устройства
 /// там следит PipeWire или PulseAudio.
@@ -351,12 +354,12 @@ const YNISON_EVERY: Duration = Duration::from_secs(60);
 const STALL_LIMIT: Duration = Duration::from_secs(3);
 
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
-    let url = api.stream_url(&t.id)?;
+    let (url, format) = api.stream_url(&t.id)?;
     let (again, id) = (api.clone(), t.id.clone());
     // Ссылка подписана и живёт недолго, поэтому для докачки берётся новая.
-    let buf = Buf::download(api.open_from(&url, 0)?, move |from| again.open_from(&again.stream_url(&id)?, from))?;
+    let buf = Buf::download(api.open_from(&url, 0)?, move |from| again.open_from(&again.stream_url(&id)?.0, from))?;
     let dec = Decoder::new(buf.reader()).map_err(|e| format!("не удалось декодировать: {e}"))?;
-    Ok((buf, dec))
+    Ok((buf, dec, format))
 }
 
 /// Что последним играло в любом клиенте, уже с треками из API.
@@ -1730,7 +1733,7 @@ impl Engine {
         });
     }
 
-    fn play_loaded(&mut self, (buf, src): Audio) {
+    fn play_loaded(&mut self, (buf, src, format): Audio) {
         let Some(t) = self.current.clone() else { return };
         if !self.ensure_audio() {
             self.error("Не найдено аудиоустройство");
@@ -1751,6 +1754,7 @@ impl Engine {
             }
         }
         self.current_buf = Some(buf);
+        self.sh().format = format;
         self.loaded = true;
         self.held_pos = None;
         self.errors_in_row = 0;
@@ -1969,7 +1973,7 @@ mod tests {
     #[ignore]
     fn stream_and_decode() {
         let api = Api::new("");
-        let url = api.stream_url("57703").expect("stream url");
+        let (url, _) = api.stream_url("57703").expect("stream url");
         let bytes = api.fetch_bytes(&url).expect("download");
         assert!(bytes.len() > 50_000);
         let dec = Decoder::new(Cursor::new(bytes)).expect("decode");
