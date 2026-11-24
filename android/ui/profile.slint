@@ -337,6 +337,7 @@ component Screen inherits Rectangle {
 
 component ProfilePage inherits Rectangle {
     in property <Icons> icons;
+    in property <length> bottom;
     background: T.bg;
     TouchArea { }
     BackArrow {
@@ -366,83 +367,91 @@ component ProfilePage inherits Rectangle {
         icon: root.icons.logout;
         clicked => { Prof.logout-open = true; }
     }
-    Rectangle {
+    profile-scroll := Flickable {
+        x: (root.width - self.width) / 2;
         y: 100px;
-        height: 112px;
-        background: @linear-gradient(160deg, #172430 0%, #1f1a28 55%, #210d17 100%);
+        width: min(root.width, 680px);
+        height: max(0px, root.height - self.y - root.bottom);
+        content-width: self.width;
+        content-height: 372px;
         Rectangle {
-            x: 21.7px;
-            width: 62.5px;
-            height: 62.5px;
-            border-radius: self.width / 2;
-            background: @linear-gradient(90deg, #fd5a53 0%, #b04aa0 50%, #4c60f7 100%);
+            y: 0px;
+            height: 112px;
+            background: @linear-gradient(160deg, #172430 0%, #1f1a28 55%, #210d17 100%);
             Rectangle {
-                width: 57px;
-                height: 57px;
+                x: 21.7px;
+                width: 62.5px;
+                height: 62.5px;
                 border-radius: self.width / 2;
-                background: #000;
-            }
-            Rectangle {
-                width: 53.7px;
-                height: 53.7px;
-                border-radius: self.width / 2;
-                clip: true;
-                Image {
-                    width: parent.width;
-                    height: parent.height;
-                    source: Prof.avatar;
-                    image-fit: cover;
+                background: @linear-gradient(90deg, #fd5a53 0%, #b04aa0 50%, #4c60f7 100%);
+                Rectangle {
+                    width: 57px;
+                    height: 57px;
+                    border-radius: self.width / 2;
+                    background: #000;
+                }
+                Rectangle {
+                    width: 53.7px;
+                    height: 53.7px;
+                    border-radius: self.width / 2;
+                    clip: true;
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: Prof.avatar;
+                        image-fit: cover;
+                    }
                 }
             }
-        }
-        Text {
-            x: 102px;
-            y: 34px;
-            width: root.width - 118px;
-            text: Prof.name;
-            color: #fff;
-            font-size: 22px;
-            font-weight: 700;
-            overflow: elide;
-        }
-        Text {
-            x: 102px;
-            y: 60px;
-            width: root.width - 118px;
-            text: Prof.login;
-            color: #ffffffcc;
-            font-size: 16px;
-            overflow: elide;
-        }
-    }
-    Rectangle {
-        x: 16px;
-        y: 228px;
-        width: root.width - 32px;
-        height: 4 * 56px;
-        border-radius: 14px;
-        background: T.card;
-        VerticalLayout {
-            MenuRow {
-                icons: root.icons;
-                title: "Управлять подпиской";
-                clicked => { Prof.link("plus"); }
+            Text {
+                x: 102px;
+                y: 34px;
+                width: profile-scroll.width - 118px;
+                text: Prof.name;
+                color: #fff;
+                font-size: 22px;
+                font-weight: 700;
+                overflow: elide;
             }
-            MenuRow {
-                icons: root.icons;
-                title: "Написать в поддержку";
-                clicked => { Prof.link("support"); }
+            Text {
+                x: 102px;
+                y: 60px;
+                width: profile-scroll.width - 118px;
+                text: Prof.login;
+                color: #ffffffcc;
+                font-size: 16px;
+                overflow: elide;
             }
-            MenuRow {
-                icons: root.icons;
-                title: "Настройки";
-                clicked => { Prof.screen = 2; }
-            }
-            MenuRow {
-                icons: root.icons;
-                title: "Изменить портрет и имя";
-                last: true;
-                clicked => { Prof.link("account"); }
+        }
+        Rectangle {
+            x: 16px;
+            y: 128px;
+            width: profile-scroll.width - 32px;
+            height: 4 * 56px;
+            border-radius: 14px;
+            background: T.card;
+            VerticalLayout {
+                MenuRow {
+                    icons: root.icons;
+                    title: "Управлять подпиской";
+                    clicked => { Prof.link("plus"); }
+                }
+                MenuRow {
+                    icons: root.icons;
+                    title: "Написать в поддержку";
+                    clicked => { Prof.link("support"); }
+                }
+                MenuRow {
+                    icons: root.icons;
+                    title: "Настройки";
+                    clicked => { Prof.screen = 2; }
+                }
+                MenuRow {
+                    icons: root.icons;
+                    title: "Изменить портрет и имя";
+                    last: true;
+                    clicked => { Prof.link("account"); }
+                }
             }
         }
     }
@@ -676,6 +685,7 @@ export component ProfileScreens inherits Rectangle {
     in property <length> bottom;
     if Prof.screen == 1: ProfilePage {
         icons: root.icons;
+        bottom: root.bottom;
     }
     if Prof.screen == 2: SettingsPage {
         icons: root.icons;

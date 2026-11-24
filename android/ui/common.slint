@@ -219,7 +219,7 @@ export component TrackRow inherits Rectangle {
     Text {
         x: 92.6px;
         y: 12.8px;
-        width: 251px;
+        width: max(0px, root.width - self.x - 24px);
         text: root.item.title;
         color: root.fg;
         font-size: 17px;
@@ -229,7 +229,7 @@ export component TrackRow inherits Rectangle {
     Text {
         x: 92.6px;
         y: 34.9px;
-        width: 251px;
+        width: max(0px, root.width - self.x - 24px);
         text: root.item.subtitle;
         color: root.fg.transparentize(0.5);
         font-size: 14px;
@@ -255,25 +255,38 @@ export component Sheet inherits Rectangle {
         }
     }
     panel := Rectangle {
-        y: root.open ? root.height - root.panel-height : root.height;
+        x: (root.width - self.width) / 2;
+        y: root.open ? root.height - self.height : root.height;
         animate y {
             duration: 280ms;
             easing: ease-out;
         }
-        width: root.width;
-        height: root.panel-height + 24px;
+        width: min(root.width, 520px);
+        height: min(root.panel-height, max(0px, root.height - 24px));
         background: root.panel-color;
         border-top-left-radius: 24px;
         border-top-right-radius: 24px;
+        clip: true;
         TouchArea { }
-        Rectangle {
-            y: 8px;
-            width: 36px;
-            height: 4px;
-            border-radius: 2px;
-            background: T.fg.with-alpha(0.12);
+        Flickable {
+            content-width: self.width;
+            content-height: max(self.height, root.panel-height);
+            interactive: root.panel-height > self.height;
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: panel.width;
+                height: root.panel-height;
+                Rectangle {
+                    y: 8px;
+                    width: 36px;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: T.fg.with-alpha(0.12);
+                }
+                @children
+            }
         }
-        @children
     }
 }
 
