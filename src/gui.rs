@@ -2263,6 +2263,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
         reveal(&ui);
     }
     slint::run_event_loop_until_quit()?;
+    player.leave();
     save_places(&ui, &places);
     sys::cleanup();
     // Фоновые потоки (аудио, сеть, обложки) не ждём: иначе процесс может остаться

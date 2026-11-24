@@ -123,6 +123,8 @@ pub enum Cmd {
     Enqueue { track: Track, next: bool },
     /// Переключатель «Треки 18+».
     AllowExplicit(bool),
+    /// Приложение закрывается: записать в Ynison, где остановились, и ответить.
+    Leave(Sender<()>),
 }
 
 enum Msg {
@@ -167,6 +169,13 @@ impl Player {
 
     pub fn send(&self, c: Cmd) {
         let _ = self.tx.send(Msg::Cmd(c));
+    }
+
+    /// Перед выходом: дождаться, пока Ynison запишет, где остановились, но не дольше 3 секунд.
+    pub fn leave(&self) {
+        let (done, wait) = mpsc::channel();
+        self.send(Cmd::Leave(done));
+        let _ = wait.recv_timeout(Duration::from_secs(3));
     }
 
     /// Сразу запоминаем выбранное время, иначе бегунок на миг вернётся к старой позиции.
@@ -335,6 +344,9 @@ const NO_OUTPUT: &str = "Не найдено аудиоустройство";
 #[cfg(not(windows))]
 const NO_OUTPUT: &str = "Не открылся звуковой выход по умолчанию. Для PipeWire нужен pipewire-alsa";
 
+/// Как часто записывать позицию играющего трека в Ynison.
+const YNISON_EVERY: Duration = Duration::from_secs(60);
+
 /// Сколько позиция может стоять на месте у играющего скачанного трека.
 const STALL_LIMIT: Duration = Duration::from_secs(3);
 
@@ -462,6 +474,9 @@ struct Engine {
     tune: Option<Vec<String>>,
     /// С какой секунды продолжить трек, когда он загрузится.
     resume_at: Option<(String, f32)>,
+    /// Когда записать состояние в Ynison: правки идут пачкой (перемотка, пауза), пишем одну.
+    ynison_due: Option<Instant>,
+    ynison_at: Instant,
     /// Текущее прослушивание для `/plays`.
     listen: Option<Listen>,
     fetching: bool,
@@ -530,6 +545,8 @@ impl Engine {
             clone_pending: false,
             tune: None,
             resume_at: None,
+            ynison_due: None,
+            ynison_at: Instant::now(),
             restore_last: None,
             listen: None,
             fetching: false,
@@ -959,6 +976,11 @@ impl Engine {
         #[cfg(windows)]
         self.check_output();
         self.check_stall();
+        // Пока играет, позиция уходит в Ynison раз в минуту: закроют приложение — потеряется не больше.
+        let playing = self.loaded && !self.paused;
+        if self.ynison_due.is_some_and(|at| Instant::now() >= at) || (playing && self.ynison_at.elapsed() >= YNISON_EVERY) {
+            self.publish();
+        }
         if let Some(at) = self.retry_at {
             if Instant::now() >= at {
                 self.retry_at = None;
@@ -1146,6 +1168,14 @@ impl Engine {
                 s.uid.clear();
             }
             Cmd::Resume => self.resume(),
+            Cmd::Leave(done) => {
+                if let (Some(api), Some(now)) = (self.api.clone(), self.ynison_now()) {
+                    if let Err(e) = crate::ynison::publish(api.token(), &crate::ynison::device_id(), &now) {
+                        log(format!("ynison: {e}"));
+                    }
+                }
+                let _ = done.send(());
+            }
             Cmd::PlayPause if self.paused => self.resume(),
             Cmd::PlayPause => {
                 self.paused = true;
@@ -1154,6 +1184,7 @@ impl Engine {
                     l.pause = true;
                 }
                 if let Some(sink) = self.sink() { sink.pause(); }
+                self.publish_soon();
             }
             Cmd::Next => {
                 self.errors_in_row = 0;
@@ -1175,6 +1206,7 @@ impl Engine {
                         self.held_pos = Some(sec.max(0.0));
                     }
                 }
+                self.publish_soon();
             }
             Cmd::Volume(v) => {
                 self.volume = v.clamp(0.0, 1.0);
@@ -1545,6 +1577,7 @@ impl Engine {
 
     fn resume(&mut self) {
         self.paused = false;
+        self.publish_soon();
         if let Some(pos) = self.held_pos.filter(|_| self.loaded && self.audio.is_none()) {
             if !self.restore_at(pos) {
                 self.paused = true;
@@ -1731,7 +1764,61 @@ impl Engine {
                 self.cmd(Cmd::Seek(pos));
             }
         }
+        self.publish_soon();
         self.prefetch_next();
+    }
+
+    fn publish_soon(&mut self) {
+        self.ynison_due = Some(Instant::now() + Duration::from_secs(1));
+    }
+
+    /// Записать в Ynison, что играет: оригинал и следующий запуск продолжат отсюда.
+    fn publish(&mut self) {
+        self.ynison_due = None;
+        self.ynison_at = Instant::now();
+        let (Some(api), Some(now)) = (self.api.clone(), self.ynison_now()) else { return };
+        let _ = self.bg.send(Box::new(move || {
+            if let Err(e) = crate::ynison::publish(api.token(), &crate::ynison::device_id(), &now) {
+                log(format!("ynison: {e}"));
+            }
+        }));
+    }
+
+    fn ynison_now(&self) -> Option<crate::ynison::Now> {
+        let current = self.current.as_ref()?;
+        let (entity_type, entity_id) = match &self.source {
+            Source::Wave => ("RADIO", WAVE.to_string()),
+            Source::Seed { station, .. } => ("RADIO", station.clone()),
+            Source::List { kind: ListKind::Playlist, id, .. } => ("PLAYLIST", id.clone()),
+            Source::List { kind: ListKind::Likes, .. } => ("PLAYLIST", format!("{}:3", self.uid)),
+            Source::List { kind: ListKind::Album, id, .. } => ("ALBUM", id.clone()),
+            Source::List { kind: ListKind::Artist, id, .. } => ("ARTIST", id.clone()),
+            Source::List { kind: ListKind::Tracks, .. } => ("VARIOUS", String::new()),
+        };
+        // У списка — весь список, у волны — текущий трек и то, что уже подобрано дальше.
+        let (tracks, index): (Vec<&Track>, usize) = match &self.list {
+            Some(l) => match l.all.iter().position(|t| t.id == current.id) {
+                Some(i) => (l.all.iter().collect(), i),
+                None => (vec![current], 0),
+            },
+            None => (std::iter::once(current).chain(self.queue.iter().take(20)).collect(), 0),
+        };
+        let playable = |t: &&Track| crate::ynison::Playable {
+            id: t.id.clone(),
+            album_id: t.album_id.clone().unwrap_or_default(),
+            title: t.title.clone(),
+        };
+        Some(crate::ynison::Now {
+            entity_type,
+            entity_id,
+            from: self.play_context().from,
+            tracks: tracks.iter().map(playable).collect(),
+            index,
+            progress_ms: if self.loaded { (self.pos() * 1000.0) as u64 } else { 0 },
+            duration_ms: current.duration_ms,
+            paused: self.paused,
+            session: if self.list.is_none() { self.session.clone() } else { String::new() },
+        })
     }
 
     /// Продолжить то, что играло последним в любом клиенте, с той же секунды и на паузе.

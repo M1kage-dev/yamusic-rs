@@ -51,6 +51,106 @@ pub fn device_id() -> String {
 /// Состояние плеера с сервера. Подключаемся «тенью»: в списке устройств нас не видно, и чужое
 /// состояние мы не перезаписываем.
 pub fn playing(token: &str, device_id: &str) -> Res<Playing> {
+    let (mut ws, state) = connect(token, device_id)?;
+    let _ = ws.close(None);
+    parse(&state).ok_or_else(|| "ynison: пустое состояние".into())
+}
+
+/// Трек в очереди, которую видят другие клиенты.
+pub struct Playable {
+    pub id: String,
+    pub album_id: String,
+    pub title: String,
+}
+
+/// Что играет здесь.
+pub struct Now {
+    /// `RADIO`, `PLAYLIST`, `ALBUM`, `ARTIST` или `VARIOUS`.
+    pub entity_type: &'static str,
+    pub entity_id: String,
+    pub from: String,
+    pub tracks: Vec<Playable>,
+    pub index: usize,
+    pub progress_ms: u64,
+    pub duration_ms: u64,
+    pub paused: bool,
+    /// Сессия волны; пустая у списков.
+    pub session: String,
+}
+
+/// Записать, что играет здесь: оригинал и следующий запуск продолжат с этого места.
+pub fn publish(token: &str, device_id: &str, now: &Now) -> Res<()> {
+    let (mut ws, _) = connect(token, device_id)?;
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let version = json!({ "device_id": device_id, "version": ts, "timestamp_ms": ts });
+    let radio = now.entity_type == "RADIO";
+    let list: Vec<Value> = now
+        .tracks
+        .iter()
+        .map(|t| {
+            let mut v = json!({
+                "playable_id": t.id,
+                "album_id_optional": t.album_id,
+                "playable_type": "TRACK",
+                "from": now.from,
+                "title": t.title,
+            });
+            if radio {
+                v["track_info"] = json!({ "track_source_key": 0 });
+            }
+            v
+        })
+        .collect();
+    let mut queue = json!({
+        "current_playable_index": now.index,
+        "entity_id": now.entity_id,
+        "entity_type": now.entity_type,
+        "playable_list": list,
+        "options": { "repeat_mode": "NONE" },
+        "entity_context": "BASED_ON_ENTITY_BY_DEFAULT",
+        "version": version,
+        "from_optional": now.from,
+    });
+    if radio && !now.session.is_empty() {
+        let next: Vec<Value> = list.iter().skip(now.index + 1).cloned().collect();
+        queue["adding_options_optional"] = json!({ "radio_options": { "session_id": now.session } });
+        queue["queue"] = json!({
+            "wave_queue": {
+                "recommended_playable_list": next,
+                "live_playable_index": now.index,
+                "entity_options": {
+                    "wave_entity_optional": { "session_id": now.session, "seeds": [] },
+                    "track_sources": [{ "key": 0, "wave_source": { "source_type": "ONLINE_BY_DEFAULT" } }],
+                },
+            },
+        });
+    }
+    let update = json!({
+        "update_player_state": {
+            "player_state": {
+                "player_queue": queue,
+                "status": {
+                    "duration_ms": now.duration_ms,
+                    "paused": now.paused,
+                    "playback_speed": 1,
+                    "progress_ms": now.progress_ms,
+                    "version": version,
+                },
+            },
+        },
+        "rid": format!("{device_id}-{ts}"),
+        "player_action_timestamp_ms": ts,
+        "activity_interception_type": "DO_NOT_INTERCEPT_BY_DEFAULT",
+    });
+    ws.send(Message::text(update.to_string())).map_err(|e| format!("ynison: {e}"))?;
+    // Сервер отвечает новым общим состоянием; без ответа обновление могло не дойти.
+    read_json(&mut ws)?;
+    let _ = ws.close(None);
+    Ok(())
+}
+
+/// Соединение с Ynison и текущее состояние, которое сервер присылает первым.
+fn connect(token: &str, device_id: &str) -> Res<(Socket, Value)> {
     let info = json!({ "app_name": "Chrome", "type": 1 }).to_string();
     let mut protocol = json!({ "Ynison-Device-Id": device_id, "Ynison-Device-Info": info });
     let mut redirect = open(REDIRECT, token, &protocol)?;
@@ -63,8 +163,7 @@ pub fn playing(token: &str, device_id: &str) -> Res<Playing> {
     let mut ws = open(&format!("wss://{host}/ynison_state.YnisonStateService/PutYnisonState"), token, &protocol)?;
     ws.send(Message::text(shadow_hello(device_id).to_string())).map_err(|e| format!("ynison: {e}"))?;
     let state = read_json(&mut ws)?;
-    let _ = ws.close(None);
-    parse(&state).ok_or_else(|| "ynison: пустое состояние".into())
+    Ok((ws, state))
 }
 
 fn open(url: &str, token: &str, protocol: &Value) -> Res<Socket> {
@@ -152,12 +251,30 @@ fn parse(state: &Value) -> Option<Playing> {
 #[cfg(test)]
 mod tests {
     /// Живой запрос с токеном из config.json: `cargo test ynison -- --ignored --nocapture`.
+    /// Записывает текущий трек на 30-й секунде и проверяет, что сервер это запомнил.
     #[test]
     #[ignore]
-    fn live_state() {
-        let cfg = crate::config::Config::load();
-        let token = cfg.token.expect("нужен вход");
-        let p = super::playing(&token, "yamusic-rs-test").unwrap();
-        println!("{} {} трек {:?} из {} на {} мс", p.entity_type, p.entity_id, p.track_id(), p.track_ids.len(), p.progress_ms);
+    fn live_round_trip() {
+        let token = crate::config::Config::load().token.expect("нужен вход");
+        let device = super::device_id();
+        let p = super::playing(&token, &device).unwrap();
+        println!("было: {} {} трек {:?} на {} мс", p.entity_type, p.entity_id, p.track_id(), p.progress_ms);
+        let id = p.track_id().expect("ничего не играло").to_string();
+        let now = super::Now {
+            entity_type: if p.entity_type == "RADIO" { "RADIO" } else { "VARIOUS" },
+            entity_id: p.entity_id.clone(),
+            from: "desktop_win-radio-default".into(),
+            tracks: vec![super::Playable { id: id.clone(), album_id: String::new(), title: String::new() }],
+            index: 0,
+            progress_ms: 30_000,
+            duration_ms: 180_000,
+            paused: true,
+            session: String::new(),
+        };
+        super::publish(&token, &device, &now).unwrap();
+        let after = super::playing(&token, &device).unwrap();
+        println!("стало: {} {} трек {:?} на {} мс", after.entity_type, after.entity_id, after.track_id(), after.progress_ms);
+        assert_eq!(after.track_id(), Some(id.as_str()));
+        assert_eq!(after.progress_ms, 30_000);
     }
 }
