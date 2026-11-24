@@ -13,6 +13,8 @@ const DOWNSCALE: i32 = 3;
 const SCENE_OFFSET_Y: f32 = -0.225;
 /// Плавность смены цветов и скорости.
 const TRANSITION_MS: f32 = 1000.0;
+/// Секунд времени шейдера за секунду, когда пятно движется.
+const MOTION_SPEED: f32 = 0.5;
 
 const VERTEX: &str = "attribute vec2 a_position;
 varying vec2 v_uv;
@@ -97,15 +99,24 @@ pub struct Wave {
     vao: Option<glow::VertexArray>,
     target: Option<Target>,
     u: Uniforms,
-    /// Время шейдера стоит на месте: картинка неподвижна и не тратит CPU. Случайная точка
-    /// даёт каждому запуску свой рисунок.
+    /// Без движения время шейдера стоит на месте: картинка неподвижна и не тратит CPU.
+    /// Случайная точка даёт каждому запуску свой рисунок.
     time: f32,
+    /// Прошлый кадр с движением: от него отсчитывается ход времени.
+    last_tick: Option<Instant>,
     alpha: Tween,
     blobs: Tween,
     from: Palette,
     to: Palette,
     mix: Tween,
     mood: Option<Mood>,
+}
+
+/// Движется ли пятно волны.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Motion {
+    Still,
+    Moving,
 }
 
 /// Состояние GL, которое Skia держит у себя в кэше: после волны его надо вернуть как было.
@@ -176,6 +187,7 @@ impl Wave {
             target: None,
             u,
             time: random_start(),
+            last_tick: None,
             alpha,
             blobs,
             from: palette,
@@ -221,11 +233,21 @@ impl Wave {
     /// # Safety
     /// Вызывать только из колбэка отрисовки Slint, где контекст GL текущий.
     /// `shift` сдвигает центр пятна по горизонтали, в пикселях экрана.
-    pub unsafe fn draw(&mut self, width: u32, height: u32, shift: i32) {
+    pub unsafe fn draw(&mut self, width: u32, height: u32, shift: i32, motion: Motion) {
         if width == 0 || height == 0 {
             return;
         }
         let now = Instant::now();
+        match motion {
+            Motion::Moving => {
+                if let Some(last) = self.last_tick {
+                    // После паузы в отрисовке пятно не прыгает вперёд.
+                    self.time += now.duration_since(last).as_secs_f32().min(0.1) * MOTION_SPEED;
+                }
+                self.last_tick = Some(now);
+            }
+            Motion::Still => self.last_tick = None,
+        }
 
         let saved = self.save();
         let gl = &self.gl;

@@ -46,6 +46,7 @@ pub fn bind(ui: &App, player: &Player) {
     apply_theme(ui);
     p.set_kids(!c.allow_explicit);
     p.set_to_end(c.add_to_end);
+    p.set_wave_motion(c.wave_motion);
     p.set_updates(c.check_updates);
     p.set_eq_on(c.eq_on);
     p.set_eq_preset(c.eq_preset.min(eq::PRESETS.len() - 1) as i32);
@@ -76,6 +77,7 @@ pub fn bind(ui: &App, player: &Player) {
         }
         c.allow_explicit = allow;
         c.add_to_end = p.get_to_end();
+        c.wave_motion = p.get_wave_motion();
         api::ADD_TO_END.store(c.add_to_end, Relaxed);
         if p.get_updates() && !c.check_updates {
             check_updates(&ui);

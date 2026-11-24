@@ -53,6 +53,8 @@ pub struct Config {
     pub allow_explicit: bool,
     /// Добавлять треки в конец плейлиста, а не в начало.
     pub add_to_end: bool,
+    /// Пятно «Моей волны» движется. Выключено: анимация всё время тратит процессор.
+    pub wave_motion: bool,
     /// Обычное окно при выходе, в пикселях экрана. На Wayland места окна не узнать.
     pub window_pos: Option<[i32; 2]>,
     pub window_size: Option<[u32; 2]>,
@@ -97,6 +99,7 @@ impl Default for Config {
             check_updates: true,
             allow_explicit: true,
             add_to_end: false,
+            wave_motion: false,
             window_pos: None,
             window_size: None,
             window_maximized: false,

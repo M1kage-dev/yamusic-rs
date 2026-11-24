@@ -740,8 +740,9 @@ fn install_wave(ui: &App, fragment: String, wave: Rc<RefCell<Option<wave_gl::Wav
             if let Some(w) = wave.borrow_mut().as_mut() {
                 let size = ui.window().size();
                 let shift = (ui.get_wave_shift() * ui.window().scale_factor()).round() as i32;
-                unsafe { w.draw(size.width, size.height, shift) };
-                if w.animating() {
+                let motion = if ui.get_wave_moving() { wave_gl::Motion::Moving } else { wave_gl::Motion::Still };
+                unsafe { w.draw(size.width, size.height, shift, motion) };
+                if w.animating() || motion == wave_gl::Motion::Moving {
                     ui.window().request_redraw();
                 }
             }
