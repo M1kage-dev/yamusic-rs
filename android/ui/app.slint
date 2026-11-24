@@ -368,8 +368,9 @@ export component App inherits Window {
                     background: #ffffff14;
                 }
                 HorizontalLayout {
-                    x: root.started ? 16px : 56px;
-                    width: parent.width - 2 * self.x;
+                    x: (root.started ? 16px : 56px) + plate-swipe.shift;
+                    width: parent.width - 2 * (root.started ? 16px : 56px);
+                    animate x { duration: plate-swipe.swiping ? 0ms : 200ms; }
                     alignment: center;
                     spacing: 6px;
                     Text {
@@ -389,10 +390,24 @@ export component App inherits Window {
                         colorize: #ffffff99;
                     }
                 }
-                TouchArea {
-                    clicked => {
-                        if Now.has-track {
-                            player.open = true;
+                // Плашку листают вбок, как обложку в плеере: влево следующий трек, вправо предыдущий.
+                plate-swipe := SwipeGestureHandler {
+                    property <length> shift: self.swiping ? self.current-position.x - self.pressed-position.x : 0px;
+                    enabled: Now.has-track;
+                    handle-swipe-left: true;
+                    handle-swipe-right: true;
+                    swiped => {
+                        if self.current-position.x - self.pressed-position.x < -60px {
+                            Now.next();
+                        } else if self.current-position.x - self.pressed-position.x > 60px {
+                            Now.prev();
+                        }
+                    }
+                    TouchArea {
+                        clicked => {
+                            if Now.has-track {
+                                player.open = true;
+                            }
                         }
                     }
                 }
