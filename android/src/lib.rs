@@ -54,6 +54,8 @@ mod tags;
 #[path = "../../src/update.rs"]
 #[allow(dead_code)]
 mod update;
+#[path = "../../src/ynison.rs"]
+mod ynison;
 
 mod blob;
 mod download;

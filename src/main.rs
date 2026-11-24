@@ -35,6 +35,7 @@ mod tags;
 mod tray;
 mod update;
 mod yandex_id;
+mod ynison;
 
 fn main() -> Result<(), slint::PlatformError> {
     #[cfg(windows)]

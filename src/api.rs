@@ -941,6 +941,10 @@ impl Api {
         Api { http, token: token.trim().to_string() }
     }
 
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
     /// Настройки аккаунта: `aiContentReductionEnabled` и прочее.
     pub fn account_settings(&self) -> Res<Value> {
         self.get("/account/settings", &[])

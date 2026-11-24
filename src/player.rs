@@ -86,6 +86,8 @@ pub struct Shared {
     pub repeat: Repeat,
     pub shuffle: bool,
     pub error: Option<(String, Instant)>,
+    /// Трек продолжен с того места, где его оставили в прошлый раз: плеер виден сразу, на паузе.
+    pub resumed: bool,
 }
 
 /// Как положение ползунка громкости переводится в усиление.
@@ -132,6 +134,7 @@ enum Msg {
     Batch { res: Res<Batch>, replace: bool, gen: u64 },
     Audio { gen: u64, res: Res<Audio> },
     Prefetch { id: String, res: Res<Audio> },
+    Resume(Res<Option<Resume>>),
     Error(String),
 }
 
@@ -344,6 +347,47 @@ fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     Ok((buf, dec))
 }
 
+/// Что последним играло в любом клиенте, уже с треками из API.
+struct Resume {
+    source: Source,
+    tracks: Vec<Track>,
+    index: usize,
+    position: f32,
+}
+
+fn fetch_resume(api: &Api) -> Res<Option<Resume>> {
+    let p = crate::ynison::playing(api.token(), &crate::ynison::device_id())?;
+    let Some(current) = p.track_id() else { return Ok(None) };
+    // Волна дальше подберёт треки сама, из её очереди нужен только текущий.
+    let ids = if p.entity_type == "RADIO" { vec![current.to_string()] } else { p.track_ids.clone() };
+    let tracks = api.tracks(&ids)?;
+    let Some(index) = tracks.iter().position(|t| t.id == current) else { return Ok(None) };
+    let track = &tracks[index];
+    let artist = |id: &str| track.artist_list.iter().find(|a| a.id == id).map(|a| a.name.clone()).unwrap_or_default();
+    let album = |id: &str| if track.album_id.as_deref() == Some(id) { track.album_title.clone() } else { String::new() };
+    let entity = p.entity_id.clone();
+    let source = match p.entity_type.as_str() {
+        "RADIO" if entity == WAVE => Source::Wave,
+        "RADIO" => {
+            let (kind, id) = entity.split_once(':').unwrap_or((entity.as_str(), ""));
+            let (header, title) = match kind {
+                "artist" => ("Моя волна по исполнителю", artist(id)),
+                "album" => ("Моя волна по альбому", album(id)),
+                "track" if id == track.id => ("Моя волна по треку", track.title.clone()),
+                "track" => ("Моя волна по треку", String::new()),
+                "playlist" => ("Моя волна по плейлисту", String::new()),
+                _ => ("Моя волна", String::new()),
+            };
+            Source::Seed { station: entity.clone(), header: header.into(), title }
+        }
+        "PLAYLIST" => Source::List { kind: ListKind::Playlist, title: String::new(), id: entity },
+        "ALBUM" => Source::List { kind: ListKind::Album, title: album(&entity), id: entity },
+        "ARTIST" => Source::List { kind: ListKind::Artist, title: artist(&entity), id: entity },
+        _ => Source::List { kind: ListKind::Tracks, id: String::new(), title: String::new() },
+    };
+    Ok(Some(Resume { source, tracks, index, position: p.progress_ms as f32 / 1000.0 }))
+}
+
 /// Перемешивание без лишних зависимостей (xorshift от времени).
 pub fn shuffle<T>(v: &mut [T]) {
     let mut x = std::time::SystemTime::now()
@@ -416,6 +460,8 @@ struct Engine {
     restore_last: Option<String>,
     /// Настройки, с которыми начать следующую сессию «Моей волны».
     tune: Option<Vec<String>>,
+    /// С какой секунды продолжить трек, когда он загрузится.
+    resume_at: Option<(String, f32)>,
     /// Текущее прослушивание для `/plays`.
     listen: Option<Listen>,
     fetching: bool,
@@ -483,6 +529,7 @@ impl Engine {
             wave_restored: false,
             clone_pending: false,
             tune: None,
+            resume_at: None,
             restore_last: None,
             listen: None,
             fetching: false,
@@ -979,9 +1026,13 @@ impl Engine {
                         s.error = None;
                     }
                     self.feedback("radioStarted", None, None);
-                    self.fetch_batch();
                     if let Some(api) = self.api.clone() {
                         let tx = self.tx.clone();
+                        // Волну качаем, когда станет ясно, не продолжить ли то, что играло.
+                        let (resume_api, resume_tx) = (api.clone(), tx.clone());
+                        thread::spawn(move || {
+                            let _ = resume_tx.send(Msg::Resume(fetch_resume(&resume_api)));
+                        });
                         let uid = acc.uid;
                         thread::spawn(move || {
                             let ids = api.liked_ids(&uid);
@@ -993,6 +1044,14 @@ impl Engine {
                     log(format!("account: {e}"));
                     self.api = None;
                     self.sh().status = Status::Failed(e);
+                }
+            },
+            Msg::Resume(res) => match res {
+                Ok(Some(r)) if self.paused && self.current.is_none() => self.apply_resume(r),
+                Ok(_) => self.fetch_batch(),
+                Err(e) => {
+                    log(format!("продолжение: {e}"));
+                    self.fetch_batch();
                 }
             },
             Msg::Likes(uid, _) if uid != self.uid => {}
@@ -1667,7 +1726,30 @@ impl Engine {
             l.go();
         }
         self.remember_wave(&t);
+        if let Some((id, pos)) = self.resume_at.take() {
+            if id == t.id && pos > 1.0 {
+                self.cmd(Cmd::Seek(pos));
+            }
+        }
         self.prefetch_next();
+    }
+
+    /// Продолжить то, что играло последним в любом клиенте, с той же секунды и на паузе.
+    fn apply_resume(&mut self, r: Resume) {
+        let Some(track) = r.tracks.get(r.index).cloned() else { return };
+        self.resume_at = Some((track.id.clone(), r.position));
+        if r.source.station().is_some() {
+            if r.source != self.source {
+                self.set_source(r.source);
+                self.feedback("radioStarted", None, None);
+            }
+            self.queue.push_back(track);
+            self.play_from_queue();
+            self.fetch_batch();
+        } else {
+            self.cmd(Cmd::PlayList { source: r.source, tracks: r.tracks, start: r.index, after: After::Loop });
+        }
+        self.sh().resumed = true;
     }
 
     // ---------- память волны ----------

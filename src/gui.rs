@@ -232,6 +232,9 @@ impl Ctx {
             self.on_ready(&s.uid);
         }
 
+        if s.resumed && !self.st.borrow().started {
+            self.st.borrow_mut().started = true;
+        }
         let started = self.st.borrow().started;
         app.set_has_track(started && s.track.is_some());
         app.set_playing(s.playing);
