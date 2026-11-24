@@ -335,7 +335,9 @@ const STALL_LIMIT: Duration = Duration::from_secs(3);
 
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     let url = api.stream_url(&t.id)?;
-    let buf = Buf::download(api.open(&url)?)?;
+    let (again, id) = (api.clone(), t.id.clone());
+    // Ссылка подписана и живёт недолго, поэтому для докачки берётся новая.
+    let buf = Buf::download(api.open_from(&url, 0)?, move |from| again.open_from(&again.stream_url(&id)?, from))?;
     let dec = Decoder::new(buf.reader()).map_err(|e| format!("не удалось декодировать: {e}"))?;
     Ok((buf, dec))
 }

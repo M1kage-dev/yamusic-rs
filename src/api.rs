@@ -13,6 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::client::{token_allowed, ANDROID_CLIENT, API_BASE as BASE, MP3_SALT, SIGN_KEY};
 
 pub const WAVE: &str = "user:onyourwave";
+/// Срок одного запроса к аудиофайлу. Что не успело скачаться, докачает следующий запрос.
+const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type Res<T> = Result<T, String>;
 
@@ -1755,10 +1757,19 @@ let mp3 = || arr.iter().filter(|x| x.get("codec").and_then(|c| c.as_str()) == So
 
     /// Скачать файл целиком (аудио, обложка). Ссылки уже подписаны — без токена.
     /// Ответ без чтения тела: трек дальше качается по кусочкам.
-    pub fn open(&self, url: &str) -> Res<reqwest::blocking::Response> {
-        let resp = self.http.get(url).send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
+    /// Аудио с байта `from`. Соединение живёт не дольше `STREAM_TIMEOUT`: зависшее
+    /// загрузчик переоткроет с того места, где оборвалось.
+    pub fn open_from(&self, url: &str, from: u64) -> Res<reqwest::blocking::Response> {
+        let mut req = self.http.get(url).timeout(STREAM_TIMEOUT);
+        if from > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={from}-"));
+        }
+        let resp = req.send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
+        }
+        if from > 0 && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err("сервер не отдаёт файл с середины".into());
         }
         Ok(resp)
     }
