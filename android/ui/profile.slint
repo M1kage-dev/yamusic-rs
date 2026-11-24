@@ -573,6 +573,12 @@ component SettingsPage inherits Screen {
         }
         SetRow {
             icons: root.icons;
+            title: "Поддержать проект";
+            text: "RS бесплатный и без рекламы";
+            clicked => { Prof.link("donate"); }
+        }
+        SetRow {
+            icons: root.icons;
             title: "Справка";
             kind: 2;
             clicked => { Prof.link("help"); }

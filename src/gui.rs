@@ -1256,6 +1256,8 @@ fn after_dpi_change() {
     }
 }
 
+const DONATE_URL: &str = "https://pay.cloudtips.ru/p/befb620d";
+
 /// Чат поддержки, как `createSupportChatUrl` оригинала.
 const SUPPORT_CHAT: &str =
     "https://yandex.ru/chat?context=%7B%22entrypoint%22%3A%22web_desktop%22%7D#/user/ee219503-b69b-9484-405b-6877a510e13c";
@@ -3003,6 +3005,7 @@ impl Ctx {
                 self.toast("Скрытые блоки снова на главной");
             }
             "about" => sys::open_url(env!("CARGO_PKG_REPOSITORY")),
+            "donate" => sys::open_url(DONATE_URL),
             "discord" => {
                 let on = !app.get_discord_on();
                 app.set_discord_on(on);

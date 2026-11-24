@@ -143,6 +143,7 @@ pub fn bind(ui: &App, player: &Player) {
             "support" => SUPPORT_CHAT.into(),
             "account" => "https://id.yandex.ru/personal".into(),
             "help" => "https://yandex.ru/support/music-app-android/".into(),
+            "donate" => "https://pay.cloudtips.ru/p/befb620d".into(),
             "terms" => "https://yandex.ru/legal/music_mobile_agreement/".into(),
             "privacy" => "https://yandex.ru/legal/confidential/".into(),
             "recommendations" => "https://music.yandex.ru/legal/recommendations/ru/#music".into(),
