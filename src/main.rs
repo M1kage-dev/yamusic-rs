@@ -11,6 +11,7 @@ mod client;
 mod config;
 mod discord;
 mod eq;
+mod fade;
 mod flac;
 mod gui;
 mod history;

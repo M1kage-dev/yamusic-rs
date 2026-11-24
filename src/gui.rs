@@ -1741,6 +1741,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     if cfg.log_volume {
         player.send(Cmd::Loudness(Loudness::Decibels));
     }
+    player.send(Cmd::Crossfade(cfg.crossfade()));
     if let Some(t) = cfg.token.clone() {
         player.send(Cmd::Login(t));
     }
@@ -1770,6 +1771,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_download_flac(cfg.download_flac);
     app.set_log_volume(cfg.log_volume);
     app.set_wave_motion(cfg.wave_motion);
+    app.set_crossfade(cfg.crossfade_secs > 0);
     app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
     let places = Rc::new(Places::default());
     places.mini.set(cfg.mini_pos.map(|[x, y]| slint::PhysicalPosition::new(x, y)));
@@ -3069,6 +3071,14 @@ impl Ctx {
                 self.player.send(Cmd::Loudness(if on { Loudness::Decibels } else { Loudness::Square }));
                 let mut st = self.st.borrow_mut();
                 st.cfg.log_volume = on;
+                st.cfg.save();
+            }
+            "crossfade" => {
+                let on = !app.get_crossfade();
+                app.set_crossfade(on);
+                let mut st = self.st.borrow_mut();
+                st.cfg.crossfade_secs = if on { crate::config::CROSSFADE_SECS } else { 0 };
+                self.player.send(Cmd::Crossfade(st.cfg.crossfade()));
                 st.cfg.save();
             }
             "wave-motion" => {

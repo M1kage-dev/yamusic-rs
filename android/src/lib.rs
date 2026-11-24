@@ -21,6 +21,8 @@ mod config;
 #[path = "../../src/eq.rs"]
 #[allow(dead_code)]
 mod eq;
+#[path = "../../src/fade.rs"]
+mod fade;
 #[path = "../../src/flac.rs"]
 #[allow(dead_code)]
 mod flac;

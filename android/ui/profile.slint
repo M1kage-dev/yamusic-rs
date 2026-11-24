@@ -19,6 +19,7 @@ export global Prof {
     in-out property <bool> less-ai;
     in-out property <bool> to-end;
     in-out property <bool> wave-motion;
+    in-out property <bool> crossfade;
     in-out property <bool> updates;
     in-out property <bool> eq-on;
     in-out property <int> eq-preset;
@@ -562,6 +563,18 @@ component SettingsPage inherits Screen {
             on: Prof.to-end;
             clicked => {
                 Prof.to-end = !Prof.to-end;
+                Prof.changed();
+            }
+        }
+        Section { text: "Воспроизведение"; }
+        SetRow {
+            icons: root.icons;
+            title: "Плавный переход между треками";
+            text: "Конец трека затихает, а следующий звучит поверх него";
+            kind: 1;
+            on: Prof.crossfade;
+            clicked => {
+                Prof.crossfade = !Prof.crossfade;
                 Prof.changed();
             }
         }

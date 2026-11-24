@@ -5,8 +5,9 @@ use crate::ahead::Ahead;
 use crate::api::{Account, Api, Batch, Res, Track, WaveSession, WAVE};
 use crate::config::log;
 use crate::eq::{Eq, EqParams};
+use crate::fade::{Fade, FadeOut};
 use crate::stream::{Buf, Reader};
-use rodio::{Decoder, OutputStream, Sink, Source as _};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source as _};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -125,6 +126,8 @@ pub enum Cmd {
     Enqueue { track: Track, next: bool },
     /// Переключатель «Треки 18+».
     AllowExplicit(bool),
+    /// Сколько треки перетекают друг в друга; ноль — без кроссфейда.
+    Crossfade(Duration),
     /// Приложение закрывается: записать в Ynison, где остановились, и ответить.
     Leave(Sender<()>),
 }
@@ -441,7 +444,14 @@ struct Engine {
     like_writes: HashMap<String, LikeWrite>,
     notify: Notify,
     eq: Arc<EqParams>,
-    audio: Option<(OutputStream, Sink)>,
+    audio: Option<(OutputStream, OutputStreamHandle, Sink)>,
+    /// Затухание играющего трека.
+    fade_out: Arc<FadeOut>,
+    /// Прошлый трек, который затухает под начало нового.
+    fading: Option<Sink>,
+    crossfade: Duration,
+    /// С каким нарастанием начать следующий загруженный трек.
+    fade_in: Duration,
     /// Выход Windows по умолчанию, на котором открыт звук, и когда его последний раз сверяли.
     #[cfg(windows)]
     out_name: Option<String>,
@@ -567,6 +577,10 @@ impl Engine {
             errors_in_row: 0,
             was_playing: false,
             handled_seek: 0,
+            fade_out: Arc::default(),
+            fading: None,
+            crossfade: Duration::ZERO,
+            fade_in: Duration::ZERO,
         }
     }
 
@@ -592,7 +606,7 @@ impl Engine {
     }
 
     fn sink(&self) -> Option<&Sink> {
-        self.audio.as_ref().map(|(_, s)| s)
+        self.audio.as_ref().map(|(_, _, s)| s)
     }
 
     fn ensure_audio(&mut self) -> bool {
@@ -600,7 +614,7 @@ impl Engine {
             match open_output() {
                 Ok((stream, handle)) => match Sink::try_new(&handle) {
                     Ok(sink) => {
-                        self.audio = Some((stream, sink));
+                        self.audio = Some((stream, handle, sink));
                         #[cfg(windows)]
                         {
                             self.out_name = default_output_name();
@@ -621,6 +635,48 @@ impl Engine {
             Loudness::Decibels if v <= 0.0 => 0.0,
             Loudness::Decibels => 10f32.powf((v - 1.0) * 50.0 / 20.0),
         }
+    }
+
+    fn apply_volume(&self) {
+        let gain = self.gain();
+        for s in self.sink().into_iter().chain(&self.fading) {
+            s.set_volume(gain);
+        }
+    }
+
+    /// Источник для звука: эквалайзер, декодирование наперёд и затухание для кроссфейда.
+    fn source(&mut self, src: Decoder<Reader>, fade_in: Duration) -> impl rodio::Source<Item = f32> + Send + 'static {
+        self.fade_out = Arc::default();
+        Fade::new(Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone())), fade_in, self.fade_out.clone())
+    }
+
+    /// Пора ли начать кроссфейд: до конца трека осталось его время и следующий трек уже скачан.
+    fn crossfade_due(&self) -> bool {
+        if self.crossfade.is_zero() || !self.loaded || self.paused || self.fading.is_some() || self.repeat == Repeat::One {
+            return false;
+        }
+        let next_ready = match (self.queue.front(), &self.prefetch) {
+            (Some(next), Some((id, _))) => *id == next.id,
+            _ => false,
+        };
+        let fade = self.crossfade.as_secs_f32();
+        let duration = self.sh().duration;
+        next_ready && duration > 3.0 * fade && duration - self.pos() <= fade
+    }
+
+    /// Прошлый трек уходит в отдельный звуковой поток и затухает, а следующий начинается в новом.
+    fn start_crossfade(&mut self) {
+        let Some((_, handle, sink)) = &mut self.audio else { return };
+        let fresh = match Sink::try_new(handle) {
+            Ok(s) => s,
+            Err(e) => return log(format!("sink: {e}")),
+        };
+        let old = std::mem::replace(sink, fresh);
+        self.fade_out.start(self.crossfade);
+        self.fade_in = self.crossfade;
+        // advance() глушит затухающий поток через stop_audio(), поэтому он отдаётся после.
+        self.advance(End::Finished);
+        self.fading = Some(old);
     }
 
     fn pos(&self) -> f32 {
@@ -670,6 +726,7 @@ impl Engine {
     /// Закрыть выход и продолжить трек с `pos` на новом. Не вышло — пауза до Play с того же места.
     fn reopen_output(&mut self, pos: f32, available: bool) {
         self.audio = None;
+        self.fading = None;
         #[cfg(windows)]
         {
             self.out_name = None;
@@ -697,7 +754,7 @@ impl Engine {
             return false;
         }
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let src = self.source(src, Duration::ZERO);
         let (vol, paused) = (self.gain(), self.paused);
         let Some(sink) = self.sink() else { return false };
         sink.pause();
@@ -916,6 +973,7 @@ impl Engine {
         if let Some(s) = self.sink() {
             s.clear();
         }
+        self.fading = None;
         self.loaded = false;
         self.held_pos = None;
     }
@@ -990,6 +1048,15 @@ impl Engine {
                 self.fetch_batch();
             }
         }
+        if self.fading.as_ref().is_some_and(|s| s.empty()) {
+            self.fading = None;
+        }
+        if self.crossfade_due() {
+            self.start_crossfade();
+            self.sync();
+            (self.notify)();
+            return;
+        }
         if self.loaded && !self.paused && self.sink().map(|s| s.empty()).unwrap_or(false) {
             if self.repeat == Repeat::One && self.current_buf.is_some() {
                 if let Some(l) = &mut self.listen {
@@ -1022,7 +1089,7 @@ impl Engine {
     fn replay(&mut self) -> bool {
         let Some(buf) = self.current_buf.clone() else { return false };
         let Ok(src) = Decoder::new(buf.reader()) else { return false };
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let src = self.source(src, Duration::ZERO);
         if let Some(sink) = self.sink() {
             sink.append(src);
             sink.play();
@@ -1187,6 +1254,7 @@ impl Engine {
                     l.pause = true;
                 }
                 if let Some(sink) = self.sink() { sink.pause(); }
+                self.fading = None;
                 self.publish_soon();
             }
             Cmd::Next => {
@@ -1200,6 +1268,7 @@ impl Engine {
                 if let Some(l) = &mut self.listen {
                     l.seek = true;
                 }
+                self.fading = None;
                 if self.loaded {
                     if let Some(s) = self.sink() {
                         if let Err(e) = s.try_seek(Duration::from_secs_f32(sec.max(0.0))) {
@@ -1213,15 +1282,11 @@ impl Engine {
             }
             Cmd::Volume(v) => {
                 self.volume = v.clamp(0.0, 1.0);
-                if let Some(s) = self.sink() {
-                    s.set_volume(self.gain());
-                }
+                self.apply_volume();
             }
             Cmd::Loudness(l) => {
                 self.loudness = l;
-                if let Some(s) = self.sink() {
-                    s.set_volume(self.gain());
-                }
+                self.apply_volume();
             }
             Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
             Cmd::Dislike => {
@@ -1301,6 +1366,7 @@ impl Engine {
                 }
             }
             Cmd::AllowExplicit(allow) => self.set_allow_explicit(allow),
+            Cmd::Crossfade(over) => self.crossfade = over,
             Cmd::Shuffle(on) => {
                 self.shuffle = on;
                 if self.list.is_some() {
@@ -1740,7 +1806,8 @@ impl Engine {
             self.sh().loading = false;
             return;
         }
-        let src = Ahead::new(Eq::new(src.convert_samples::<f32>(), self.eq.clone()));
+        let fade_in = std::mem::take(&mut self.fade_in);
+        let src = self.source(src, fade_in);
         let vol = self.gain();
         let paused = self.paused;
         if let Some(sink) = self.sink() {

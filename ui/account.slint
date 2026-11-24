@@ -432,6 +432,13 @@ export component SettingsPage inherits Rectangle {
                 clicked => { App.setting("log-volume"); }
             }
             SettingItem {
+                title: T.t("Плавный переход между треками");
+                desc: T.t("Конец трека затихает, а следующий звучит поверх него");
+                toggle: true;
+                on: App.crossfade;
+                clicked => { App.setting("crossfade"); }
+            }
+            SettingItem {
                 title: T.t("Папка для скачивания");
                 desc: App.download-dir;
                 clicked => { App.setting("download-dir"); }
