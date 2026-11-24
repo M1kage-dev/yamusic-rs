@@ -86,6 +86,12 @@ pub struct Mood {
 }
 
 impl Track {
+    /// Тот же трек, но не привязанный к строке показанного плейлиста.
+    pub fn detached(mut self) -> Self {
+        self.playlist_slot = None;
+        self
+    }
+
     /// "trackId:albumId" — такой формат ждут лайки и фидбек волны.
     pub fn full_id(&self) -> String {
         match &self.album_id {
@@ -323,7 +329,13 @@ fn playlist_entry_track(item: &Value, mut track: Track, revision: Option<u64>, i
 
 fn playlist_remove_index(list: &Value, track: &Track) -> Res<usize> {
     let items = list.get("tracks").and_then(Value::as_array).ok_or("нет списка треков")?;
-    let slot = track.playlist_slot.as_ref().ok_or("Нет ревизии показанного плейлиста. Обновите список")?;
+    let Some(slot) = track.playlist_slot.as_ref() else {
+        // Трек открыт не из этого плейлиста: убираем первое его вхождение.
+        return items
+            .iter()
+            .position(|item| s(item.get("id")).or_else(|| s(item.pointer("/track/id"))).as_ref() == Some(&track.id))
+            .ok_or_else(|| "трека нет в плейлисте".into());
+    };
     if list.get("revision").and_then(Value::as_u64) != Some(slot.revision) {
         return Err("Плейлист изменился. Выберите трек ещё раз после обновления".into());
     }
@@ -345,8 +357,7 @@ fn removal_uses_unfiltered_server_order() {
     let mut changed = list.clone();
     changed["revision"] = json!(13);
     assert!(playlist_remove_index(&changed, &selected).is_err());
-    assert!(playlist_remove_index(&list, &track).is_err());
-
+    assert_eq!(playlist_remove_index(&list, &track), Ok(1));
 }
 
 pub(crate) fn parse_track(v: &Value) -> Option<Track> {
@@ -1592,6 +1603,15 @@ impl Api {
         Ok(v.as_array().map(|a| a.iter().filter_map(parse_playlist).collect()).unwrap_or_default())
     }
 
+    /// Какие из плейлистов `kinds` уже содержат трек: так оригинал ставит галочки в меню.
+    pub fn playlists_with_track(&self, uid: &str, kinds: &[String], track_id: &str) -> Res<Vec<String>> {
+        let v = self.get(&format!("/users/{uid}/playlists"), &[("kinds", kinds.join(",").as_str()), ("rich-tracks", "false")])?;
+        let has = |p: &&Value| {
+            p.get("tracks").and_then(Value::as_array).is_some_and(|ts| ts.iter().any(|t| s(t.get("id")).as_deref() == Some(track_id)))
+        };
+        Ok(v.as_array().map(|a| a.iter().filter(has).filter_map(|p| s(p.get("kind"))).collect()).unwrap_or_default())
+    }
+
     pub fn create_playlist(&self, uid: &str, title: &str) -> Res<Playlist> {
         let v = self.send(
             self.req(Method::POST, &format!("/users/{uid}/playlists/create"))
@@ -1634,7 +1654,7 @@ impl Api {
         let revision = v.get("revision").and_then(Value::as_u64).ok_or("нет ревизии плейлиста")?.to_string();
         let at = playlist_remove_index(&v, t)?;
         let mut item = json!({ "id": t.id });
-        if let Some(a) = t.playlist_slot.as_ref().and_then(|slot| slot.album.as_ref()).or(t.album_id.as_ref()) {
+        if let Some(a) = s(v.pointer(&format!("/tracks/{at}/albumId"))).or_else(|| t.album_id.clone()) {
             item["albumId"] = json!(a);
         }
         let diff = json!([{ "op": "delete", "from": at, "to": at + 1, "tracks": [item] }]).to_string();

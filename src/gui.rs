@@ -3426,10 +3426,37 @@ impl Ctx {
             if let Data::Playlists(pls) = &*data {
                 let own: Vec<Playlist> = pls.iter().filter(|p| p.uid == uid).cloned().collect();
                 let names: Vec<SharedString> = own.iter().map(|p| SharedString::from(p.title.as_str())).collect();
-                self.ui().global::<App>().set_menu_playlists(ModelRc::from(Rc::new(VecModel::from(names))));
+                let ui = self.ui();
+                let app = ui.global::<App>();
+                app.set_menu_playlist_has(ModelRc::from(Rc::new(VecModel::from(vec![false; own.len()]))));
+                app.set_menu_playlists(ModelRc::from(Rc::new(VecModel::from(names))));
+                let kinds: Vec<String> = own.iter().map(|p| p.kind.clone()).collect();
                 self.st.borrow_mut().menu_playlists = own;
+                if let Some(t) = self.st.borrow().menu_track.clone() {
+                    Self::mark_menu_playlists(net, uid, kinds, t.id);
+                }
             }
         }
+    }
+
+    /// Галочки у плейлистов, где трек уже есть.
+    fn mark_menu_playlists(net: Net, uid: String, kinds: Vec<String>, track_id: String) {
+        std::thread::spawn(move || {
+            let has = match net.api.playlists_with_track(&uid, &kinds, &track_id) {
+                Ok(has) => has,
+                Err(e) => return log(format!("плейлисты с треком {track_id}: {e}")),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                with_ctx(|c| {
+                    let st = c.st.borrow();
+                    if st.menu_track.as_ref().is_none_or(|t| t.id != track_id) {
+                        return;
+                    }
+                    let marks: Vec<bool> = st.menu_playlists.iter().map(|p| has.contains(&p.kind)).collect();
+                    c.ui().global::<App>().set_menu_playlist_has(ModelRc::from(Rc::new(VecModel::from(marks))));
+                });
+            });
+        });
     }
 
     fn menu_action(self: &Rc<Self>, id: &str) {
@@ -3561,8 +3588,21 @@ impl Ctx {
         };
         let (Some(pl), Some(net)) = (pl, net) else { return };
         if let Some(t) = t {
-            let title = t.title.clone();
-            net.add_to_playlist(&pl, vec![t], title);
+            let has = self.ui().global::<App>().get_menu_playlist_has().row_data(i).unwrap_or(false);
+            if !has {
+                let title = t.title.clone();
+                net.add_to_playlist(&pl, vec![t], title);
+                return;
+            }
+            // Как у оригинала: повторный выбор плейлиста убирает из него трек.
+            let t = t.detached();
+            std::thread::spawn(move || {
+                match net.api.remove_from_playlist(&pl.uid, &pl.kind, &t) {
+                    Ok(()) => net.say(format!("Трек «{}» удален из плейлиста «{}»", t.title, pl.title)),
+                    Err(e) => net.say(format!("{}: {e}", crate::i18n::tr("Не удалось удалить трек из плейлиста"))),
+                }
+                Self::refresh_playlist(&net, &pl.uid, &pl.kind);
+            });
             return;
         }
         // Меню открыто у альбома или плейлиста — добавляем все его треки.

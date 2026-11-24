@@ -326,6 +326,8 @@ export global App {
     in property <[MenuEntry]> menu-items;
     in-out property <int> submenu-open: -1;
     in property <[string]> menu-playlists;
+    // Есть ли трек из меню в плейлисте с тем же номером.
+    in property <[bool]> menu-playlist-has;
     // Меню в теме приложения (кроме волны и плеера на весь экран) и под кнопкой, а не над ней.
     in property <bool> menu-themed;
     in property <bool> menu-below;
