@@ -540,6 +540,7 @@ impl Ctx {
                 "ar-albums" => one(net.api.artist_albums(arg, "direct-albums")),
                 "ar-compilations" => one(net.api.artist_albums(arg, "also-albums")),
                 "ar-similar" => one(net.api.similar_artists(arg)),
+                "entities" => one(net.api.block_entities(arg)),
                 _ => Ok(vec![(String::new(), cached)]),
             };
             let _ = slint::invoke_from_event_loop(move || {
