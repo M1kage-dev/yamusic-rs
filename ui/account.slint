@@ -418,6 +418,13 @@ export component SettingsPage inherits Rectangle {
                 }
             }
             SettingItem {
+                title: T.t("Движение волны");
+                desc: T.t("Пятно «Моей волны» плавно вращается и дышит. Нагружает процессор");
+                toggle: true;
+                on: App.wave-motion;
+                clicked => { App.setting("wave-motion"); }
+            }
+            SettingItem {
                 title: T.t("Логарифмическая громкость");
                 desc: T.t("Громкость меняется ровнее на слух, тихие уровни настраиваются точнее");
                 toggle: true;

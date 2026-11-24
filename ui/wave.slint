@@ -376,15 +376,19 @@ export component WavePage inherits Rectangle {
     property <float> drag-progress: -1;
     property <float> shown: drag-progress >= 0 ? drag-progress : progress;
 
-    // Пятно: картинка оригинала, перекрашенная под трек.
+    // Пятно: картинка оригинала, перекрашенная под трек. С движением медленно вращается,
+    // дышит и плывёт; периоды взаимно простые, чтобы рисунок не повторялся.
     Image {
-        x: cx - blob / 2;
-        y: 284px + db - blob / 2;
+        property <duration> tick: App.wave-motion ? animation-tick() : 0ms;
+        x: cx - blob / 2 + blob * 0.02 * sin(tick / 11s * 360deg);
+        y: 284px + db - blob / 2 + blob * 0.02 * cos(tick / 13s * 360deg);
         width: blob;
         height: blob;
         source: App.blob;
         image-fit: contain;
         opacity: 0.8;
+        transform-rotation: tick / 60s * 360deg;
+        transform-scale: 1 + 0.04 * sin(tick / 7s * 360deg);
     }
 
     // Колесо вайбов: бесконечная лента, крутится колёсиком мыши.

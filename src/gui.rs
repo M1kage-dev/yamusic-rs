@@ -1769,6 +1769,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
     app.set_download_flac(cfg.download_flac);
     app.set_log_volume(cfg.log_volume);
+    app.set_wave_motion(cfg.wave_motion);
     app.set_hidden_blocks(landing_ui::hidden_titles(&cfg).into());
     let places = Rc::new(Places::default());
     places.mini.set(cfg.mini_pos.map(|[x, y]| slint::PhysicalPosition::new(x, y)));
@@ -3068,6 +3069,13 @@ impl Ctx {
                 self.player.send(Cmd::Loudness(if on { Loudness::Decibels } else { Loudness::Square }));
                 let mut st = self.st.borrow_mut();
                 st.cfg.log_volume = on;
+                st.cfg.save();
+            }
+            "wave-motion" => {
+                let on = !app.get_wave_motion();
+                app.set_wave_motion(on);
+                let mut st = self.st.borrow_mut();
+                st.cfg.wave_motion = on;
                 st.cfg.save();
             }
             "download-flac" => {
