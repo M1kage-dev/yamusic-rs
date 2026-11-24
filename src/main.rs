@@ -11,6 +11,7 @@ mod client;
 mod config;
 mod discord;
 mod eq;
+mod fade;
 mod flac;
 mod gui;
 mod history;
@@ -30,6 +31,8 @@ mod palette;
 mod player;
 mod save;
 mod secret;
+#[cfg(windows)]
+mod smtc;
 mod stream;
 #[cfg_attr(windows, path = "sys/windows.rs")]
 #[cfg_attr(target_os = "linux", path = "sys/linux.rs")]
@@ -40,9 +43,12 @@ mod tags;
 mod tray;
 mod update;
 mod yandex_id;
+mod ynison;
 
 fn main() -> Result<(), slint::PlatformError> {
     install_panic_log();
+    #[cfg(windows)]
+    smtc::register_app_id();
     #[cfg(target_os = "linux")]
     sys::audio_identity();
     // После обновления старая версия ещё закрывается: ждём её до 15 секунд.

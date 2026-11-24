@@ -1,6 +1,5 @@
-# Каждый push и PR: clippy, тесты и сборки в артефактах: exe для Windows, .deb, .rpm и
-# AppImage для Linux (x86_64 и aarch64), универсальный .dmg для macOS.
-# Тег v*: desktop-релиз со всеми файлами. Подписанные APK выпускает апстрим отдельно.
+# Windows и Linux x86-64: только clippy и тесты. macOS: также universal DMG.
+# Тег v*: релиз с одним macOS DMG.
 name: Сборка
 
 on:
@@ -15,17 +14,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-
-      - name: Тег совпадает с версией в Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Тег $GITHUB_REF_NAME, а в Cargo.toml версия $v"
-            exit 1
-          fi
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -33,21 +21,7 @@ jobs:
 
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
-      - run: cargo build --release
 
-      - name: SHA-256
-        shell: pwsh
-        run: (Get-FileHash target/release/yamusic-rs.exe -Algorithm SHA256).Hash.ToLower()
-
-      # Без zip: из артефактов скачивается сразу yamusic-rs.exe.
-      - uses: actions/upload-artifact@v7
-        with:
-          name: yamusic-rs-exe
-          path: target/release/yamusic-rs.exe
-          archive: false
-
-  # Ubuntu 22.04 — самая старая glibc (2.35) среди поддерживаемых: собранное здесь
-  # запускается и на ней, и на всех более новых дистрибутивах.
   linux:
     runs-on: ubuntu-22.04
     steps:
@@ -67,89 +41,6 @@ jobs:
 
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
-      - run: cargo build --release
-
-      - name: Пакеты
-        id: pkg
-        run: |
-          command -v cargo-deb >/dev/null || cargo install --locked cargo-deb
-          command -v cargo-generate-rpm >/dev/null || cargo install --locked cargo-generate-rpm
-          tools/appimage.sh
-          cargo deb --no-build
-          cargo generate-rpm
-          echo "deb=$(ls target/debian/*.deb)" >> "$GITHUB_OUTPUT"
-          echo "rpm=$(ls target/generate-rpm/*.rpm)" >> "$GITHUB_OUTPUT"
-
-      - name: SHA-256
-        run: sha256sum target/release/yamusic-rs target/appimage/*.AppImage ${{ steps.pkg.outputs.deb }} ${{ steps.pkg.outputs.rpm }}
-
-      # По файлу на артефакт: без zip каждый скачивается как есть.
-      - uses: actions/upload-artifact@v7
-        with:
-          name: appimage-x86_64
-          path: target/appimage/yamusic-rs-x86_64.AppImage
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          name: deb-x86_64
-          path: ${{ steps.pkg.outputs.deb }}
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          name: rpm-x86_64
-          path: ${{ steps.pkg.outputs.rpm }}
-          archive: false
-
-  # Нативная сборка ARM на той же glibc 2.35; clippy и тесты идут в linux на x86_64.
-  linux-arm64:
-    runs-on: ubuntu-22.04-arm
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Зависимости сборки
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libasound2-dev libfontconfig1-dev libfreetype-dev \
-            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev \
-            libxcursor-dev libxi-dev libxrandr-dev
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - run: cargo build --release
-
-      - name: Пакеты
-        id: pkg
-        run: |
-          command -v cargo-deb >/dev/null || cargo install --locked cargo-deb
-          command -v cargo-generate-rpm >/dev/null || cargo install --locked cargo-generate-rpm
-          tools/appimage.sh
-          cargo deb --no-build
-          cargo generate-rpm
-          echo "deb=$(ls target/debian/*.deb)" >> "$GITHUB_OUTPUT"
-          echo "rpm=$(ls target/generate-rpm/*.rpm)" >> "$GITHUB_OUTPUT"
-
-      - name: SHA-256
-        run: sha256sum target/release/yamusic-rs target/appimage/*.AppImage ${{ steps.pkg.outputs.deb }} ${{ steps.pkg.outputs.rpm }}
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: appimage-aarch64
-          path: target/appimage/yamusic-rs-aarch64.AppImage
-          if-no-files-found: error
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          name: deb-arm64
-          path: ${{ steps.pkg.outputs.deb }}
-          if-no-files-found: error
-          archive: false
-      - uses: actions/upload-artifact@v7
-        with:
-          name: rpm-aarch64
-          path: ${{ steps.pkg.outputs.rpm }}
-          if-no-files-found: error
-          archive: false
 
   # macOS: две архитектуры одним универсальным бинарём. Тесты и clippy — один раз,
   # сборка и упаковка — через tools/macos-app.sh, он же собирает universal через lipo.
@@ -158,6 +49,8 @@ jobs:
   macos:
     runs-on: macos-latest
     timeout-minutes: 90
+    outputs:
+      dmg-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
 
@@ -180,7 +73,6 @@ jobs:
       - name: librsvg для значка
         run: brew install librsvg
 
-
       - run: cargo clippy --release --all-targets -- -D warnings
       - run: cargo test --release
 
@@ -202,20 +94,26 @@ jobs:
         run: |
           codesign --verify --deep --strict "target/macos/Яндекс Музыка RS.app"
           echo "подпись: $(codesign -dvv "target/macos/Яндекс Музыка RS.app" 2>&1 | grep -E 'Authority|Signature=' | tr '\n' ' ')"
-          echo "архитектуры: $(lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs")"
-          lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs" | grep -q x86_64
+          archs=$(lipo -archs "target/macos/Яндекс Музыка RS.app/Contents/MacOS/yamusic-rs")
+          echo "архитектуры: $archs"
+          case "$archs" in
+            'x86_64 arm64'|'arm64 x86_64') ;;
+            *) echo '::error::Ожидались срезы x86_64 и arm64'; exit 1 ;;
+          esac
 
       - name: SHA-256
         run: shasum -a 256 target/macos/*.dmg
 
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           path: target/macos/yamusic-rs-*-macos.dmg
+          if-no-files-found: error
           archive: false
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, linux-arm64, macos]
+    needs: macos
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -224,8 +122,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
+          artifact-ids: ${{ needs.macos.outputs.dmg-id }}
           path: dist
-          merge-multiple: true
 
       # Описание релиза — раздел из CHANGELOG.md. Нет раздела — релиз не собираем:
       # так история изменений не отстаёт от тегов.
@@ -238,7 +136,7 @@ jobs:
             hit { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
-            echo "::error::В CHANGELOG.md нет раздела «## [$v]»"
+            echo "::error::В CHANGELOG.md нет раздела «## [${v}]»"
             exit 1
           fi
           {
@@ -247,27 +145,27 @@ jobs:
             cat notes.md
           } > body.md
 
-      - name: Релиз
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --notes-file body.md
-
-      # Контрольные суммы считаем уже по загруженным файлам: то, что видит пользователь.
-      - name: Контрольные суммы
+      - name: Релиз с контрольной суммой DMG
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          shopt -s nullglob dotglob
+          files=(dist/*)
+          if [[ ${#files[@]} -ne 1 || ! -f ${files[0]} || ${files[0]} != dist/yamusic-rs-*-macos.dmg ]]; then
+            echo '::error::В dist должен быть ровно один macOS DMG'
+            exit 1
+          fi
+          dmg=${files[0]}
+          sha=$(sha256sum "$dmg" | cut -d' ' -f1)
           {
+            cat body.md
             echo
             echo "## Контрольные суммы SHA-256"
             echo
             echo "| Файл | SHA-256 |"
             echo "| --- | --- |"
-            for f in dist/*; do
-              echo "| \`$(basename "$f")\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
-            done
-          } > sums.md
-          cat body.md sums.md > full.md
-          gh release edit "$GITHUB_REF_NAME" --notes-file full.md
+            echo "| \`${dmg##*/}\` | \`$sha\` |"
+          } > full.md
+          gh release create "$GITHUB_REF_NAME" "$dmg" --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --notes-file full.md

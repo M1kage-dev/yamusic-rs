@@ -4,12 +4,12 @@
 export enum Page { wave, search, trends, concerts, nonmusic, collection, list, artist, artists, settings, grid, chart, history }
 
 export struct TrackItem {
+    id: string,
     title: string,
     version: string,
     artists: string,
     duration: string,
     cover: image,
-    liked: bool,
     explicit: bool,
     available: bool,
     artist-names: [string],
@@ -128,11 +128,24 @@ export struct MenuEntry {
     submenu: bool,
 }
 
+export struct WaveOption {
+    name: string,
+    image: image,
+    selected: bool,
+}
+
+// Группа настроек «Моей волны»: «По характеру», «Под настроение», «По языку».
+export struct WaveSettingGroup {
+    name: string,
+    options: [WaveOption],
+}
+
 export struct WheelEntry {
     name: string,
     description: string,
     cover: image,
     round: bool,
+    control-accent: bool,
 }
 
 // trend: 0 — корона (первое место), 1 — без изменений, 2 — вверх, 3 — вниз, 4 — новый.
@@ -187,6 +200,7 @@ export global App {
     in property <string> version-upstream;
     in property <string> app-name;
     in property <[WheelEntry]> wheel;
+    in-out property <float> wheel-offset;
     in property <bool> pinned;
 
     // Аккаунт
@@ -207,6 +221,8 @@ export global App {
     in property <float> position;
     in property <float> duration;
     in property <bool> liked;
+    in property <int> likes-revision;
+    pure callback track-liked(string, int) -> bool;
     in property <int> repeat;
     in property <bool> shuffle;
     in property <float> volume: 0.6;
@@ -214,6 +230,10 @@ export global App {
     in property <string> source-title;
     // Волна по треку, исполнителю, вайбу: над пятном «челка» с крестиком.
     in property <bool> wave-context;
+    // Формат играющего файла, как у мода PulseSync: «MP3 320».
+    in property <string> track-format;
+    in property <[WaveSettingGroup]> wave-settings;
+    in-out property <bool> wave-settings-open;
     in property <[string]> artist-list;
     in property <string> artists-longest;
     // Фаза анимации пятна, секунды; идёт только во время игры на странице волны.
@@ -308,6 +328,8 @@ export global App {
     in property <[MenuEntry]> menu-items;
     in-out property <int> submenu-open: -1;
     in property <[string]> menu-playlists;
+    // Есть ли трек из меню в плейлисте с тем же номером.
+    in property <[bool]> menu-playlist-has;
     // Меню в теме приложения (кроме волны и плеера на весь экран) и под кнопкой, а не над ней.
     in property <bool> menu-themed;
     in property <bool> menu-below;
@@ -337,6 +359,7 @@ export global App {
     in property <[ChartRow]> search-chart;
     in property <[CardItem]> search-history;
     in property <bool> searching;
+    in property <bool> search-tracks-only;
     in property <bool> results-loading;
     in property <[TrackItem]> sr-tracks;
     in property <[CardItem]> sr-artists;
@@ -427,6 +450,8 @@ export global App {
     in property <string> download-dir;
     in property <bool> download-flac;
     in property <bool> log-volume;
+    in property <bool> wave-motion;
+    in property <bool> crossfade;
     // Режим работы: «Плавный» — анимации и кэш слоёв, «Лёгкий» — без них.
     in property <bool> motion: true;
     // Статус «Слушает» в профиле Discord и что с ним сейчас.
@@ -465,6 +490,8 @@ export global App {
     callback open-current-album();
     callback open-current-artist(int);
     callback reset-wave();
+    callback open-wave-settings();
+    callback tune-wave(int, int);
     callback go-forward();
     callback row-open-album(string, int);
     callback row-open-artist(string, int, int);
@@ -474,6 +501,7 @@ export global App {
     callback seek-lyric(int);
 
     callback search-edited(string);
+    callback open-search-tracks();
     callback open-suggest(int);
     callback open-card(string, int);
     callback play-chart(int);
@@ -492,6 +520,7 @@ export global App {
     callback artist-like-track(int);
     callback artist-familiar();
     callback open-pin(int);
+    callback open-pin-menu(int, length, length);
     callback open-likes();
     callback open-playlist(int);
     callback open-album(int);

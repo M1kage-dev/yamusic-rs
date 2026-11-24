@@ -19,9 +19,8 @@
 
 > [!NOTE]
 > Это форк [SpolzerMod/yamusic-rs](https://github.com/SpolzerMod/yamusic-rs). Основной репозиторий
-> поддерживает Windows, Linux и Android. Этот форк добавляет macOS и публикует сборки для
-> настольных систем. [Подписанный APK для Android](https://github.com/SpolzerMod/yamusic-rs/releases/latest)
-> выпускается в основном репозитории.
+> публикует [сборки для Windows, Linux и Android](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
+> Этот форк добавляет macOS и выпускает универсальный `.dmg` для Apple Silicon и Intel.
 
 ## Что это
 
@@ -66,8 +65,12 @@
 ## Установка
 
 Готовый `.dmg` — в [релизах](https://github.com/M1kage-dev/yamusic-rs/releases/latest)
-(универсальный: Apple Silicon и Intel, SHA-256 в описании релиза). Там же — `.exe` для Windows
-и `.deb`, `.rpm`, AppImage для Linux x86-64 и ARM64. Сборка на macOS из исходников:
+(универсальный: Apple Silicon и Intel, SHA-256 в описании релиза).
+Если вы установили наш `.exe` или пакет Linux версии 1.0.7 либо раньше, один раз вручную
+установите [версию из основного репозитория](https://github.com/SpolzerMod/yamusic-rs/releases/latest):
+старый клиент ищет обновления в этом форке и сам на другой репозиторий не переключится.
+
+Сборка на macOS из исходников:
 
 ```bash
 git clone https://github.com/M1kage-dev/yamusic-rs
@@ -126,8 +129,8 @@ tools/macos-app.sh --skip-build  # бандл из готового бинаря
 tools/macos-app.sh --universal --dmg  # arm64 + x86_64 одним бинарём и .dmg
 ```
 
-GitHub Actions собирает `windows`, `linux`, `linux-arm64` и `macos` (универсальный бинарь,
-проверка подписи, `lipo -archs`), а на тег `v*` публикует артефакты с контрольными суммами.
+GitHub Actions запускает тесты и Clippy на Windows и Linux x86-64, не упаковывая приложения.
+По тегу `v*` релиз зависит только от проверки и сборки macOS; в него попадает один `.dmg` с SHA-256.
 
 `cargo fmt` не включён: стиль upstream шире стандартного, массовый реформат сломал бы слияния
 с основным репозиторием.
@@ -177,8 +180,9 @@ GPL-3.0, как и upstream: изменённая версия распрост�
 
 Fork of [SpolzerMod/yamusic-rs](https://github.com/SpolzerMod/yamusic-rs) that adds macOS.
 The same Rust + Slint + Skia client: native window frame, menu bar item, media keys and Now Playing,
-live system theme, LaunchAgent autostart. Desktop releases include Linux x86-64 and ARM64 packages;
-signed Android APKs are available from [upstream](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
+live system theme, LaunchAgent autostart. This fork publishes only the universal macOS DMG.
+For Windows, Linux and Android, use [upstream releases](https://github.com/SpolzerMod/yamusic-rs/releases/latest).
+Users of older Windows or Linux builds from this fork must switch to upstream manually.
 
 ```bash
 git clone https://github.com/M1kage-dev/yamusic-rs

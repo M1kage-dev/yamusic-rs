@@ -1,6 +1,6 @@
 [package]
 name = "yamusic-rs"
-version = "1.0.7+upstream.1.1.5"
+version = "1.0.8+upstream.1.1.6"
 edition = "2021"
 rust-version = "1.92"
 license = "GPL-3.0-only"
@@ -16,6 +16,7 @@ rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3
 # и отправляет токен лишним хопом. VPN работает и так — он маршрутизирует на уровне сети.
 # SOCKS — для явно заданного ALL_PROXY, без чтения настроек прокси macOS.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip", "socks"] }
+tungstenite = { version = "0.26", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md-5 = "0.10"
@@ -32,6 +33,7 @@ features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
   "Win32_UI_HiDpi",
@@ -39,7 +41,6 @@ features = [
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_UI_Shell",
-  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Registry",
   "Win32_Security_Cryptography",
   "Win32_UI_Controls_Dialogs",
@@ -58,6 +59,22 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-media-player = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "MPRemoteCommandCenter", "MPRemoteCommand", "MPRemoteCommandEvent", "MPNowPlayingInfoCenter", "MPMediaItem", "MPMediaItemCollection", "MPMediaEntity"] }
 raw-window-handle = "0.6"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+  "Foundation",
+  "Media",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_WinRT",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
