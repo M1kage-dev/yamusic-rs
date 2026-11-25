@@ -396,6 +396,17 @@ fn bind_player(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
             pages::open(&format!("album:{a}"));
         }
     });
+    let p = player.clone();
+    now.on_open_source(move || {
+        let Source::List { kind, id, .. } = p.state().source else { return };
+        match kind {
+            ListKind::Album => pages::open(&format!("album:{id}")),
+            ListKind::Playlist => pages::open(&format!("playlist:{id}")),
+            ListKind::Artist => pages::open(&format!("artist:{id}")),
+            ListKind::Likes => pages::open("likes:"),
+            ListKind::Tracks => {}
+        }
+    });
     now.on_open_playlists(|| pages::open("playlists"));
     let p = player.clone();
     now.on_back_to_wave(move || {

@@ -877,6 +877,17 @@ export component Player inherits Rectangle {
         font-weight: 500;
         horizontal-alignment: center;
     }
+    // Название альбома или плейлиста в шапке открывает его.
+    TouchArea {
+        x: 56px;
+        y: root.header-y;
+        width: root.width - 160px;
+        height: 48px;
+        clicked => {
+            root.open = false;
+            Now.open-source();
+        }
+    }
     Rectangle {
         x: 327.6px - 12px + root.width - 411.4px;
         y: root.header-y;
