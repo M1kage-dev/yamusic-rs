@@ -2235,6 +2235,14 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
                 after_move();
                 EventResult::Propagate
             }
+            // В i3 кадры, нарисованные до того, как окно показано и растянуто, теряются, а Slint
+            // дорисовывает только изменившееся: окно оставалось пустым кусками (#87).
+            // Ждём, пока окно сменит размер или станет видно.
+            #[cfg(target_os = "linux")]
+            WindowEvent::Occluded(false) | WindowEvent::Focused(true) | WindowEvent::Resized(_) => {
+                Timer::single_shot(Duration::from_millis(150), || with_ctx(|c| full_repaint(&c.ui())));
+                EventResult::Propagate
+            }
             _ => EventResult::Propagate,
         }
     });
