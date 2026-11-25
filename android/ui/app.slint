@@ -153,13 +153,15 @@ component LoginScreen inherits Rectangle {
 // отпускание, и кнопка под пальцем нажимается (#107). Касание от края, ушедшее внутрь,
 // забирает себе этот обработчик, а кнопке достаётся отмена.
 component EdgeSwipeGuard inherits Window {
-    // Зона жеста «назад» у кромки экрана.
-    property <length> edge: 32px;
+    // Зоны системных жестов: «назад» у боковых кромок, «домой» снизу. Жест
+    // «назад» начинают не у самой кромки, поэтому боковые полосы шире системных (#123).
+    property <length> edge: 48px;
     SwipeGestureHandler {
         width: root.width;
         height: root.height;
         handle-swipe-left: self.pressed-position.x > root.width - root.edge;
         handle-swipe-right: self.pressed-position.x < root.edge;
+        handle-swipe-up: self.pressed-position.y > root.height - max(24px, root.safe-area-insets.bottom);
         @children
     }
 }
