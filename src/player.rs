@@ -1265,8 +1265,18 @@ impl Engine {
                     l.stop();
                     l.pause = true;
                 }
-                if let Some(sink) = self.sink() { sink.pause(); }
                 self.fading = None;
+                // На паузе AAudio-поток остаётся запущенным, и Galaxy Buds не шлют PLAY, когда
+                // наушник возвращают в ухо (#96). Выход закрываем, продолжим с того же места.
+                #[cfg(target_os = "android")]
+                {
+                    if self.loaded {
+                        self.held_pos = Some(self.pos());
+                    }
+                    self.audio = None;
+                }
+                #[cfg(not(target_os = "android"))]
+                if let Some(sink) = self.sink() { sink.pause(); }
                 self.publish_soon();
             }
             Cmd::Next => {
