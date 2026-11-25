@@ -1699,7 +1699,8 @@ impl Api {
 
     /// Название (`name`) или описание (`description`) плейлиста.
     pub fn set_playlist_field(&self, uid: &str, kind: &str, field: &str, value: &str) -> Res<()> {
-        self.send(self.req(Method::POST, &format!("/users/{uid}/playlists/{kind}/{field}")).query(&[("value", value)])).map(|_| ())
+        // В строке запроса описание длиннее ~800 букв сервер отбивает с 431, в форме длина не ограничена.
+        self.send(self.req(Method::POST, &format!("/users/{uid}/playlists/{kind}/{field}")).form(&[("value", value)])).map(|_| ())
     }
 
     pub fn delete_playlist(&self, uid: &str, kind: &str) -> Res<()> {
