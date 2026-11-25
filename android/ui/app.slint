@@ -149,7 +149,22 @@ component LoginScreen inherits Rectangle {
     }
 }
 
-export component App inherits Window {
+// Свайп «назад» от края Android отменяет касание, а Slint превращает отмену в обычное
+// отпускание, и кнопка под пальцем нажимается (#107). Касание от края, ушедшее внутрь,
+// забирает себе этот обработчик, а кнопке достаётся отмена.
+component EdgeSwipeGuard inherits Window {
+    // Зона жеста «назад» у кромки экрана.
+    property <length> edge: 32px;
+    SwipeGestureHandler {
+        width: root.width;
+        height: root.height;
+        handle-swipe-left: self.pressed-position.x > root.width - root.edge;
+        handle-swipe-right: self.pressed-position.x < root.edge;
+        @children
+    }
+}
+
+export component App inherits EdgeSwipeGuard {
     background: transparent;
     default-font-family: "YS Text";
 
