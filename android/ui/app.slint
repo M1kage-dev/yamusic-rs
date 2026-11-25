@@ -306,7 +306,7 @@ export component App inherits Window {
             }
 
             // Во время игры: имя исполнителя, его фото без фона и маленькая обложка.
-            if root.started: Rectangle {
+            if root.started: playing-wave := Rectangle {
                 probe := Text {
                     visible: false;
                     text: Now.artist;
@@ -314,7 +314,10 @@ export component App inherits Window {
                     font-weight: 900;
                     font-size: 56px;
                 }
-                property <length> name-y: Now.cutout.width > 0 ? wave.header-y + 62px : max(wave.header-y + 40px, wave.play-y - 80px);
+                property <length> portrait-y: wave.header-y + 132px;
+                property <length> portrait-height: max(0px, wave.track-y - portrait-y - 12px);
+                property <bool> show-portrait: Now.cutout.width > 0 && portrait-height >= 48px;
+                property <length> name-y: show-portrait ? wave.header-y + 62px : max(wave.header-y + 40px, wave.play-y - 80px);
                 TouchArea {
                     y: parent.name-y;
                     height: 64px;
@@ -332,11 +335,16 @@ export component App inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-                if Now.cutout.width > 0: TouchArea {
-                    y: wave.header-y + 72px;
-                    width: min(parent.width - 56px, self.height);
-                    height: max(0px, wave.track-y - self.y);
+                if playing-wave.show-portrait: TouchArea {
+                    x: (parent.width - self.width) / 2;
+                    y: parent.portrait-y;
+                    width: min(parent.width - 48px, self.height * 1.12);
+                    height: parent.portrait-height;
                     Image {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
                         source: Now.cutout;
                         image-fit: contain;
                     }
