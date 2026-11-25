@@ -14,6 +14,8 @@ use crate::client::{token_allowed, ANDROID_CLIENT, API_BASE as BASE, MP3_SALT, S
 
 pub const WAVE: &str = "user:onyourwave";
 /// Срок одного запроса к аудиофайлу. Что не успело скачаться, докачает следующий запрос.
+/// Ошибка `download_to`, когда загрузку остановили.
+pub const STOPPED: &str = "остановлено";
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type Res<T> = Result<T, String>;
@@ -1836,14 +1838,28 @@ impl Api {
     }
 
     /// Скачать файл потоком на диск, без чтения целиком в память. Ссылки уже подписаны — без токена.
-    pub fn download_to(&self, url: &str, path: &std::path::Path) -> Res<u64> {
+    /// Поднятый `stop` прерывает загрузку на следующем куске.
+    pub fn download_to(&self, url: &str, path: &std::path::Path, stop: &std::sync::atomic::AtomicBool) -> Res<u64> {
+        use std::io::{Read as _, Write as _};
         let mut resp = self.http.get(url).send().map_err(|e| format!("сеть: {}", crate::config::chain(&e)))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
         let expected = resp.content_length();
         let mut f = std::fs::File::create(path).map_err(|e| format!("файл: {e}"))?;
-        let n = std::io::copy(&mut resp, &mut f).map_err(|e| format!("загрузка прервалась: {e}"))?;
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut n = 0u64;
+        loop {
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(STOPPED.into());
+            }
+            let k = resp.read(&mut buf).map_err(|e| format!("загрузка прервалась: {e}"))?;
+            if k == 0 {
+                break;
+            }
+            f.write_all(&buf[..k]).map_err(|e| format!("файл: {e}"))?;
+            n += k as u64;
+        }
         f.sync_all().map_err(|e| format!("файл: {e}"))?;
         if expected.is_some_and(|e| e != n) {
             return Err(format!("загрузка оборвалась: {n} из {} байт", expected.unwrap_or(0)));

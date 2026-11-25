@@ -84,7 +84,8 @@ struct State {
     trailer: Option<Trailer>,
     /// Настройки «Моей волны» с сервера, выбранный вариант в каждой группе и картинки вариантов.
     wave_tune: Vec<(crate::api::WaveSettingGroup, usize, Vec<Image>)>,
-    downloading: bool,
+    /// Идущее скачивание списка: папка (она же название списка) и флаг отмены.
+    download: Option<(String, Arc<AtomicBool>)>,
 }
 
 /// Трейлер: треки звучат по 12,5 с с середины, потом следующий.
@@ -1852,7 +1853,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             vibe_key: None,
             trailer: None,
             wave_tune: Vec::new(),
-            downloading: false,
+            download: None,
         }),
     });
     CTX.with(|c| *c.borrow_mut() = Some(ctx.clone()));
@@ -3197,8 +3198,11 @@ impl Ctx {
         }
         if !l.tracks.is_empty() {
             items.push(self.menu_entry("list-playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
-            // У «Мне нравится» скачивание вынесено кнопкой в шапку.
-            if !likes {
+            let downloading = self.st.borrow().download.as_ref().is_some_and(|(folder, _)| *folder == l.title);
+            if downloading {
+                items.push(self.menu_entry("list-download-stop", "Отменить скачивание", icons.get_m_download(), false));
+            } else if !likes {
+                // У «Мне нравится» скачивание вынесено кнопкой в шапку.
                 items.push(self.menu_entry("list-download", "Скачать", icons.get_m_download(), false));
             }
         }
@@ -3516,6 +3520,11 @@ impl Ctx {
                 "like" => self.list_like(),
                 "trailer" => self.ui().global::<App>().invoke_list_trailer(),
                 "download" => self.ui().global::<App>().invoke_list_download(),
+                "download-stop" => {
+                    if let Some((_, stop)) = &self.st.borrow().download {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
                 "vibe" => {
                     let Some(data) = self.list() else { return };
                     let Data::List(l) = &*data else { return };
@@ -3557,7 +3566,7 @@ impl Ctx {
                 let flac = self.st.borrow().cfg.download_flac;
                 self.toast(format!("Скачиваем «{}»", t.title));
                 std::thread::spawn(move || {
-                    let res = save_track(&api, &dir, &t, flac);
+                    let res = save_track(&api, &dir, &t, flac, &AtomicBool::new(false));
                     net.say(match res {
                         Ok(p) => format!("Сохранено: {}", p.display()),
                         Err(e) => format!("Не удалось скачать: {e}"),
@@ -4147,12 +4156,13 @@ impl Ctx {
         if tracks.is_empty() {
             return;
         }
-        if self.st.borrow().downloading {
+        if self.st.borrow().download.is_some() {
             self.toast("Скачивание уже идёт");
             return;
         }
         let Some(net) = self.st.borrow().net.clone() else { return };
-        self.st.borrow_mut().downloading = true;
+        let stop = Arc::new(AtomicBool::new(false));
+        self.st.borrow_mut().download = Some((folder.clone(), stop.clone()));
         self.toast(format!("Скачиваем {}", tracks_word(tracks.len() as u64)));
         let api = net.api.clone();
         let dir = music_dir(&self.st.borrow().cfg).join(file_name(&folder));
@@ -4161,12 +4171,16 @@ impl Ctx {
             let total = tracks.len();
             let (mut ok, mut failed) = (0, 0);
             for (i, t) in tracks.iter().enumerate() {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 if saved_already(&dir, t) {
                     ok += 1;
                     continue;
                 }
-                match save_track(&api, &dir, t, flac) {
+                match save_track(&api, &dir, t, flac, &stop) {
                     Ok(_) => ok += 1,
+                    Err(_) if stop.load(Ordering::Relaxed) => break,
                     Err(e) => {
                         failed += 1;
                         log(format!("скачивание {}: {e}", t.id));
@@ -4176,12 +4190,14 @@ impl Ctx {
                     net.say(format!("Скачано {} из {total}", i + 1));
                 }
             }
-            net.say(if failed == 0 {
+            net.say(if stop.load(Ordering::Relaxed) {
+                format!("Скачивание отменено, скачано {ok} из {total}: {}", dir.display())
+            } else if failed == 0 {
                 format!("Скачано {ok} из {total}: {}", dir.display())
             } else {
                 format!("Скачано {ok} из {total}, не удалось {failed}: {}", dir.display())
             });
-            let _ = slint::invoke_from_event_loop(|| with_ctx(|c| c.st.borrow_mut().downloading = false));
+            let _ = slint::invoke_from_event_loop(|| with_ctx(|c| c.st.borrow_mut().download = None));
         });
     }
 }
