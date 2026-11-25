@@ -1775,6 +1775,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_translations(crate::i18n::available());
     app.set_download_dir(music_dir(&cfg).display().to_string().into());
     app.set_download_flac(cfg.download_flac);
+    keys::init(&app, &cfg.hotkeys);
     app.set_log_volume(cfg.log_volume);
     app.set_wave_motion(cfg.wave_motion);
     app.set_crossfade(cfg.crossfade_secs > 0);
@@ -3014,6 +3015,7 @@ impl Ctx {
             crate::i18n::set_lang(l);
             app.set_lang(l.into());
             ui.global::<T>().set_lang(l.into());
+            keys::show(&app);
             let mut st = self.st.borrow_mut();
             st.cfg.lang = l.to_string();
             st.cfg.save();

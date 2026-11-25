@@ -66,6 +66,8 @@ pub struct Config {
     pub window_maximized: bool,
     /// Место мини-плеера при выходе.
     pub mini_pos: Option<[i32; 2]>,
+    /// Горячие клавиши, которые поменял пользователь: действие → клавиши по ячейкам, "" — пусто.
+    pub hotkeys: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// Блок запоминается по id из скелета: он постоянный («recommended_playlists»), а заголовок
@@ -110,6 +112,7 @@ impl Default for Config {
             window_size: None,
             window_maximized: false,
             mini_pos: None,
+            hotkeys: Default::default(),
         }
     }
 }
