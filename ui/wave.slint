@@ -534,7 +534,7 @@ export component WavePage inherits Rectangle {
                 glass: true;
             }
         }
-        GlassButton { y: 8px; icon: Icons.dislike; enabled: App.is-wave; clicked => { App.dislike(); } }
+        GlassButton { y: 8px; icon: App.disliked ? Icons.disliked : Icons.dislike; enabled: App.is-wave; clicked => { App.dislike(); } }
         // Плашка трека — она же полоса перемотки: закрашена слева по прогрессу.
         pill := Rectangle {
             width: min(346px, text-w - 4 * 52px);

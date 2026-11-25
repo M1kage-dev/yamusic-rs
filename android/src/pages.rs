@@ -631,7 +631,7 @@ fn menu_action(n: i32) {
         8 => {
             let uid = now::uid();
             std::thread::spawn(move || {
-                if let Err(e) = api.dislike(&uid, &t.full_id()) {
+                if let Err(e) = api.dislike(&uid, &t.full_id(), false) {
                     log(format!("дизлайк: {e}"));
                 }
             });
