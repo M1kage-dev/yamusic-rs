@@ -333,6 +333,8 @@ fn bind_player(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
         p.send(Cmd::Repeat(next));
     });
     let p = player.clone();
+    now.on_toggle_shuffle(move || p.send(Cmd::Shuffle(!p.state().shuffle)));
+    let p = player.clone();
     now.on_track_wave(move || {
         let Some(t) = p.state().track else { return };
         p.send(Cmd::Wave(Source::Seed { station: format!("track:{}", t.id), header: "Моя волна по треку".into(), title: t.title }));
@@ -498,6 +500,7 @@ fn sync(ui: &App, player: &Player, wave: &Rc<RefCell<Option<wave_gl::Wave>>>, qu
         now.set_duration_text(now::time(s.duration).into());
     }
     now.set_lyric(now::lyric_at(s.position));
+    now.set_shuffle(s.shuffle);
     now.set_repeat(match s.repeat {
         Repeat::Off => 0,
         Repeat::All => 1,
@@ -665,6 +668,8 @@ const WEB_ICONS: &[(&str, &str)] = &[
     ("ic_dislike_24", "dislike_xs"),
     ("ic_repeat_default_40", "repeat_xs"),
     ("ic_repeat_active_1_40", "repeat_one_xs"),
+    ("ic_shuffle_default_40", "shuffle_xs"),
+    ("ic_shuffle_active_40", "shuffle_xs"),
     ("ic_lyrics_default_40", "syncLyrics_m"),
     ("ui_kit_ic_download_24", "download_xxs"),
     ("ic_timer_24", "history_m"),
@@ -708,6 +713,8 @@ fn load_icons(mut icon: impl FnMut(&str) -> Option<slint::Image>) -> Icons {
         dislike: icon("ic_dislike_24"),
         repeat: icon("ic_repeat_default_40"),
         repeat_one: icon("ic_repeat_active_1_40"),
+        shuffle: icon("ic_shuffle_default_40"),
+        shuffle_on: icon("ic_shuffle_active_40"),
         lyrics: icon("ic_lyrics_default_40"),
         download: icon("ui_kit_ic_download_24"),
         timer: icon("ic_timer_24"),

@@ -636,6 +636,7 @@ fn menu_action(n: i32) {
                 }
             });
         }
+        9 => crate::download::start(api, "", vec![t]),
         _ => {}
     }
 }

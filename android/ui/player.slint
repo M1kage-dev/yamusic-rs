@@ -457,9 +457,9 @@ export component Player inherits Rectangle {
                 PillButton {
                     x: controls.width - root.side - 72px;
                     y: 246.3px;
-                    icon: Now.icons.download;
-                    icon-size: 24px;
-                    clicked => { Now.download(); }
+                    icon: Now.shuffle ? Now.icons.shuffle-on : Now.icons.shuffle;
+                    active: Now.shuffle;
+                    clicked => { Now.toggle-shuffle(); }
                 }
             }
 
