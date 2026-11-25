@@ -190,9 +190,8 @@ impl Ctx {
                 let step = if a == Action::Forward { SEEK_STEP } else { -SEEK_STEP };
                 app.invoke_seek(slide(s.position, s.duration, step));
             }
-            // В волне кнопки повтора и перемешивания выключены; у оригинала там тоже нет
-            // перемешивания (`canShuffle`).
-            Action::Repeat | Action::Shuffle if app.get_is_wave() => return false,
+            // Перемешивания в волне нет, как у оригинала (`canShuffle`).
+            Action::Shuffle if app.get_is_wave() => return false,
             Action::Repeat => app.invoke_cycle_repeat(),
             Action::Shuffle => app.invoke_toggle_shuffle(),
             Action::Fullscreen => {
