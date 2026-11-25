@@ -1007,7 +1007,9 @@ fn landing_block(kind: &str, title: &str, more: bool, uri: &str, b: LBlock) -> B
         }
         "CHART_TRACKS" => {
             let pos = b.chart.iter().map(|(p, _)| p.to_string()).collect();
-            return Block { pos, more: more_key, ..Block::tracks(title, b.tracks.into_iter().take(5).collect()) };
+            // Блок лендинга отдаёт только топ-10, весь чарт — /landing3/chart, как на ПК.
+            let more = Some(Key::Block(kind.to_string(), "/landing3/chart".into(), title.to_string()));
+            return Block { pos, more, ..Block::tracks(title, b.tracks.into_iter().take(5).collect()) };
         }
         "DONATIONS" | "EDITORIAL_ARTISTS" => Block::cards(ARTISTS, title, b.cards),
         "EDITORIAL_PROMOTIONS" => Block::cards(BANNERS, title, b.cards),
