@@ -352,12 +352,10 @@ fn bind_player(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
         let Some(album) = t.album_id else { return };
         let p = p.clone();
         std::thread::spawn(move || match api.trailer(&format!("albums/{album}")) {
-            Ok((title, tracks)) => p.send(Cmd::PlayList {
-                source: Source::List { kind: ListKind::Album, id: album, title },
-                tracks,
-                start: 0,
-                after: After::Wave(Source::Wave),
-            }),
+            Ok((title, tracks)) => {
+                p.send(Cmd::PlayList { source: Source::List { kind: ListKind::Album, id: album, title }, tracks, start: 0, after: After::Wave(Source::Wave) });
+                p.send(Cmd::Resume);
+            }
             Err(e) => log(format!("трейлер: {e}")),
         });
     });
@@ -371,6 +369,7 @@ fn bind_player(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
                 start: i as usize,
                 after: After::Wave(Source::Wave),
             });
+            p.send(Cmd::Resume);
         }
     });
     let p = player.clone();

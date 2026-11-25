@@ -451,6 +451,8 @@ impl St {
             return;
         }
         self.player.send(Cmd::PlayList { source: Source::List { kind, id, title }, tracks, start, after: After::Wave(Source::Wave) });
+        // На паузе трек иначе только встаёт текущим и ждёт второго нажатия (#124).
+        self.player.send(Cmd::Resume);
     }
 
     /// Источник для плеера по открытой странице.
@@ -732,7 +734,8 @@ fn action(b: usize, n: i32) {
                 let id = id.clone();
                 std::thread::spawn(move || match api.trailer(&format!("artists/{id}")) {
                     Ok((title, tracks)) => {
-                        p.send(Cmd::PlayList { source: Source::List { kind: ListKind::Artist, id, title }, tracks, start: 0, after: After::Wave(Source::Wave) })
+                        p.send(Cmd::PlayList { source: Source::List { kind: ListKind::Artist, id, title }, tracks, start: 0, after: After::Wave(Source::Wave) });
+                        p.send(Cmd::Resume);
                     }
                     Err(e) => log(format!("трейлер: {e}")),
                 });
