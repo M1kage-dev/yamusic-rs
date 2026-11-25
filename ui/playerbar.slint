@@ -195,6 +195,7 @@ export component PlayerBar inherits Rectangle {
                 x: parent.width - 49px;
                 y: 24px;
                 icon: App.volume <= 0 ? Icons.volume-off : Icons.volume;
+                scroll-volume: true;
                 active: false;
                 ink: vol-open ? #ffffffe6 : #ffffff80;
                 clicked => { App.toggle-mute(); }
@@ -327,6 +328,7 @@ export component MiniPlayer inherits Rectangle {
             width: 24px;
             height: 24px;
             icon: App.volume <= 0 ? Icons.volume-off : Icons.volume;
+            scroll-volume: true;
             icon-size: 16px;
             clicked => { App.toggle-mute(); }
         }
