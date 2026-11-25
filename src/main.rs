@@ -23,6 +23,7 @@ mod mpris;
 mod net;
 #[cfg(target_os = "macos")]
 mod nowplaying;
+mod output;
 #[cfg(target_os = "macos")]
 mod tray_macos;
 #[cfg(target_os = "macos")]
