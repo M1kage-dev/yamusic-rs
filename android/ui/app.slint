@@ -163,7 +163,8 @@ export component App inherits Window {
     out property <bool> wave-moving: Prof.wave-motion && root.logged-in && !Pages.shown && !player.open;
     out property <length> wave-shift: root.wide-wave ? root.rail-width + min(600px, (root.width - root.rail-width) * 0.52) / 2 - root.width / 2 : 0px;
     property <length> rail-width: root.rail ? 88px : 0px;
-    property <length> nav-height: root.rail ? 0px : 83.8px;
+    // Вкладки 64 dp и системная навигация под ними: полоска жестов или три кнопки (#96).
+    property <length> nav-height: (root.rail ? 0px : 64px) + root.safe-area-insets.bottom;
     property <length> page-bottom: root.nav-height + (Now.has-track ? 84px : 16px);
     in property <string> login-code;
     in property <string> login-hint;
