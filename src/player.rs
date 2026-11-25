@@ -6,8 +6,9 @@ use crate::api::{Account, Api, Batch, Res, Track, WaveSession, WAVE};
 use crate::config::log;
 use crate::eq::{Eq, EqParams};
 use crate::fade::{Fade, FadeOut};
+use crate::output::Output;
 use crate::stream::{Buf, Reader};
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source as _};
+use rodio::{Decoder, Sink, Source as _};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -313,7 +314,7 @@ fn default_output_name() -> Option<String> {
 
 /// Многоканальные выходы Windows (виртуальные 7.1 у гарнитур) искажают f32, а i32 играют чисто: cpal#892.
 #[cfg(windows)]
-fn open_surround() -> Option<(OutputStream, rodio::OutputStreamHandle)> {
+fn open_surround() -> Option<Output> {
     use rodio::cpal::traits::HostTrait;
     use rodio::cpal::SampleFormat;
     use rodio::DeviceTrait;
@@ -328,21 +329,21 @@ fn open_surround() -> Option<(OutputStream, rodio::OutputStreamHandle)> {
         .ok()?
         .find(|c| c.sample_format() == SampleFormat::I32 && c.channels() == def.channels() && c.min_sample_rate() <= rate && rate <= c.max_sample_rate())?
         .with_sample_rate(rate);
-    let out = OutputStream::try_from_device_config(&dev, cfg).ok()?;
+    let out = Output::open_with(&dev, cfg).ok()?;
     log(format!("аудиовыход: {} каналов, i32", def.channels()));
     Some(out)
 }
 
 /// Только выход по умолчанию: `try_default` при неудаче молча берёт любое другое устройство,
 /// и звук уходит, например, в неподключённый HDMI (#53).
-fn open_output() -> Result<(OutputStream, rodio::OutputStreamHandle), rodio::StreamError> {
+fn open_output() -> Result<Output, rodio::StreamError> {
     use rodio::cpal::traits::HostTrait;
     #[cfg(windows)]
     if let Some(out) = open_surround() {
         return Ok(out);
     }
     let dev = rodio::cpal::default_host().default_output_device().ok_or(rodio::StreamError::NoDevice)?;
-    OutputStream::try_from_device(&dev)
+    Output::open(&dev)
 }
 
 #[cfg(windows)]
@@ -355,6 +356,9 @@ const YNISON_EVERY: Duration = Duration::from_secs(60);
 
 /// Сколько позиция может стоять на месте у играющего скачанного трека.
 const STALL_LIMIT: Duration = Duration::from_secs(3);
+
+/// Если выход снова сломался быстрее этого, не переоткрываем его, а ставим паузу до Play.
+const BROKEN_AGAIN: Duration = Duration::from_secs(30);
 
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     let (url, format) = api.stream_url(&t.id)?;
@@ -451,7 +455,7 @@ struct Engine {
     like_writes: HashMap<String, LikeWrite>,
     notify: Notify,
     eq: Arc<EqParams>,
-    audio: Option<(OutputStream, OutputStreamHandle, Sink)>,
+    audio: Option<(Output, Sink)>,
     /// Затухание играющего трека.
     fade_out: Arc<FadeOut>,
     /// Прошлый трек, который затухает под начало нового.
@@ -464,6 +468,8 @@ struct Engine {
     out_name: Option<String>,
     #[cfg(windows)]
     out_checked: Instant,
+    /// Когда выход последний раз сломался.
+    broke_at: Option<Instant>,
     /// Выход пропал посреди трека: с этого места трек продолжится по Play.
     held_pos: Option<f32>,
     /// Позиция играющего трека и с какого момента она не меняется.
@@ -546,6 +552,7 @@ impl Engine {
             out_name: None,
             #[cfg(windows)]
             out_checked: Instant::now(),
+            broke_at: None,
             held_pos: None,
             stall: (0.0, Instant::now()),
             api: None,
@@ -613,22 +620,20 @@ impl Engine {
     }
 
     fn sink(&self) -> Option<&Sink> {
-        self.audio.as_ref().map(|(_, _, s)| s)
+        self.audio.as_ref().map(|(_, s)| s)
     }
 
     fn ensure_audio(&mut self) -> bool {
         if self.audio.is_none() {
             match open_output() {
-                Ok((stream, handle)) => match Sink::try_new(&handle) {
-                    Ok(sink) => {
-                        self.audio = Some((stream, handle, sink));
-                        #[cfg(windows)]
-                        {
-                            self.out_name = default_output_name();
-                        }
+                Ok(out) => {
+                    let sink = out.sink();
+                    self.audio = Some((out, sink));
+                    #[cfg(windows)]
+                    {
+                        self.out_name = default_output_name();
                     }
-                    Err(e) => log(format!("sink: {e}")),
-                },
+                }
                 Err(e) => log(format!("audio device: {e}")),
             }
         }
@@ -673,12 +678,8 @@ impl Engine {
 
     /// Прошлый трек уходит в отдельный звуковой поток и затухает, а следующий начинается в новом.
     fn start_crossfade(&mut self) {
-        let Some((_, handle, sink)) = &mut self.audio else { return };
-        let fresh = match Sink::try_new(handle) {
-            Ok(s) => s,
-            Err(e) => return log(format!("sink: {e}")),
-        };
-        let old = std::mem::replace(sink, fresh);
+        let Some((out, sink)) = &mut self.audio else { return };
+        let old = std::mem::replace(sink, out.sink());
         self.fade_out.start(self.crossfade);
         self.fade_in = self.crossfade;
         // advance() глушит затухающий поток через stop_audio(), поэтому он отдаётся после.
@@ -728,6 +729,18 @@ impl Engine {
         log(format!("звук встал на {pos:.1} с, выход переоткрывается"));
         self.stall = (pos, Instant::now());
         self.reopen_output(pos, true);
+    }
+
+    /// Поток выхода сообщил об ошибке: закрываем его, пока ALSA не крутит ошибку без конца (#82).
+    fn check_broken(&mut self) {
+        if !self.audio.as_ref().is_some_and(|(out, _)| out.broken()) {
+            return;
+        }
+        let again = self.broke_at.is_some_and(|at| at.elapsed() < BROKEN_AGAIN);
+        self.broke_at = Some(Instant::now());
+        let pos = self.pos();
+        log(if again { "выход сломался снова, пауза до Play" } else { "выход сломался, переоткрывается" });
+        self.reopen_output(pos, !again);
     }
 
     /// Закрыть выход и продолжить трек с `pos` на новом. Не вышло — пауза до Play с того же места.
@@ -1048,6 +1061,7 @@ impl Engine {
     fn tick(&mut self) {
         #[cfg(windows)]
         self.check_output();
+        self.check_broken();
         self.check_stall();
         // Пока играет, позиция уходит в Ynison раз в минуту: закроют приложение — потеряется не больше.
         let playing = self.loaded && !self.paused;

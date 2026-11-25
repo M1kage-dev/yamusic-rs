@@ -21,6 +21,7 @@ mod landing;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod net;
+mod output;
 mod palette;
 mod player;
 mod save;
