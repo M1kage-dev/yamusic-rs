@@ -50,6 +50,10 @@ struct State {
     /// Пока пользователь ничего не включил, плеер показывается пустым — как в официальном приложении.
     started: bool,
     wheel: Vec<crate::api::WheelItem>,
+    /// Для какой волны загружено колесо; None — ещё не грузили.
+    wheel_seeds: Option<Vec<String>>,
+    /// Настройки «Моей волны», выбранные здесь (seeds `setting…`).
+    tune_seeds: Vec<String>,
     liked_albums: std::collections::HashSet<String>,
     liked_playlists: std::collections::HashSet<String>,
     /// «Смотреть всё»: ключ страницы, её вкладки и выбранная вкладка.
@@ -172,6 +176,13 @@ fn matches_track_filter(t: &Track, query: &str) -> bool {
     query.is_empty() || t.title.to_lowercase().contains(query) || t.artists.to_lowercase().contains(query)
 }
 
+/// В группе настроек волны ничего не выбрано (у «Под занятие» нет варианта «Любое»).
+const NOTHING: usize = usize::MAX;
+
+fn is_activity(seed: &str) -> bool {
+    seed.starts_with("activity:")
+}
+
 fn plural<'a>(n: u64, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
     let (m10, m100) = (n % 10, n % 100);
     if m10 == 1 && m100 != 11 {
@@ -292,6 +303,7 @@ impl Ctx {
         };
         app.set_source_title(source_title.into());
         app.set_wave_context(context);
+        self.sync_wheel(&s.source);
 
         app.set_can_prev(s.track.is_some());
         let playing_now = started && s.playing;
@@ -367,7 +379,6 @@ impl Ctx {
         std::thread::spawn(move || {
             let about = api.about();
             let pins = api.pins();
-            let wheel = api.wheel();
             let liked_albums = api.liked_album_ids(&uid);
             let liked_playlists = api.liked_playlist_keys(&uid);
             let less_ai = api.account_settings().ok().and_then(|v| v.get("aiContentReductionEnabled").and_then(|b| b.as_bool()));
@@ -404,10 +415,6 @@ impl Ctx {
                     if let Some(on) = less_ai {
                         crate::api::LESS_AI.store(on, std::sync::atomic::Ordering::Relaxed);
                         app.set_less_ai(on);
-                    }
-                    match wheel {
-                        Ok(w) => c.set_wheel(w),
-                        Err(e) => log(format!("wheel: {e}")),
                     }
                 })
             });
@@ -1186,9 +1193,11 @@ impl Ctx {
         if let Some(ui) = self.ui.upgrade() {
             ui.global::<App>().set_wave_settings_open(true);
         }
+        let activity = self.player.state().source.station().filter(|s| s.starts_with("activity:")).map(String::from);
         std::thread::spawn(move || {
             let groups = net.api.wave_setting_groups();
-            let current = net.api.wave_settings();
+            let mut current = net.api.wave_settings();
+            current.extend(activity);
             let _ = slint::invoke_from_event_loop(move || {
                 with_ctx(|c| match groups {
                     Ok(groups) => c.set_wave_settings(groups, &current),
@@ -1202,12 +1211,13 @@ impl Ctx {
         let tune: Vec<_> = groups
             .into_iter()
             .map(|g| {
+                let activities = g.options.iter().any(|o| is_activity(&o.seed));
                 let chosen = g
                     .options
                     .iter()
                     .position(|o| current.contains(&o.seed))
                     .or_else(|| g.options.iter().position(|o| o.any))
-                    .unwrap_or(0);
+                    .unwrap_or(if activities { NOTHING } else { 0 });
                 let images = vec![Image::default(); g.options.len()];
                 (g, chosen, images)
             })
@@ -1281,8 +1291,33 @@ impl Ctx {
         self.st.borrow_mut().wheel = items;
     }
 
+    /// Колесо зависит от играющей волны: сменилась волна — спросить его заново.
+    fn sync_wheel(self: &Rc<Self>, source: &Source) {
+        let seeds = match source {
+            Source::Wave => std::iter::once(crate::api::WAVE.to_string()).chain(self.st.borrow().tune_seeds.iter().cloned()).collect(),
+            Source::Seed { station, .. } => vec![station.clone()],
+            Source::List { .. } => Vec::new(),
+        };
+        let Some(net) = self.st.borrow().net.clone() else { return };
+        if self.st.borrow().wheel_seeds.as_ref() == Some(&seeds) {
+            return;
+        }
+        self.st.borrow_mut().wheel_seeds = Some(seeds.clone());
+        std::thread::spawn(move || {
+            let wheel = net.api.wheel(&seeds);
+            let _ = slint::invoke_from_event_loop(move || {
+                with_ctx(|c| match wheel {
+                    Ok(w) if c.st.borrow().wheel_seeds.as_ref() == Some(&seeds) => c.set_wheel(w),
+                    Ok(_) => {}
+                    Err(e) => log(format!("wheel: {e}")),
+                })
+            });
+        });
+    }
+
     fn play_wheel(self: &Rc<Self>, i: usize) {
         let Some(w) = self.st.borrow().wheel.get(i).cloned() else { return };
+        self.st.borrow_mut().tune_seeds.clear();
         let source = match w.station() {
             Some(station) => Source::Seed { station, header: "Моя волна".into(), title: w.name.clone() },
             None => Source::Wave,
@@ -1923,6 +1958,8 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             uid: String::new(),
             started: false,
             wheel: Vec::new(),
+            wheel_seeds: None,
+            tune_seeds: Vec::new(),
             liked_albums: Default::default(),
             liked_playlists: Default::default(),
             grid_key: None,
@@ -4767,26 +4804,49 @@ fn register_extra(app: &App) {
     app.on_open_wave_settings(|| with_ctx(|c| c.open_wave_settings()));
     app.on_tune_wave(|group, option| {
         with_ctx(|c| {
-            let settings = {
+            let (settings, activity) = {
                 let mut st = c.st.borrow_mut();
                 let Some(entry) = st.wave_tune.get_mut(group.max(0) as usize) else { return };
-                entry.1 = (option.max(0) as usize).min(entry.0.options.len().saturating_sub(1));
-                st.wave_tune
+                let option = (option.max(0) as usize).min(entry.0.options.len().saturating_sub(1));
+                let picked = entry.0.options[option].clone();
+                // Занятие — отдельная волна: повторное нажатие возвращает к настроенной «Моей волне».
+                let activity = if is_activity(&picked.seed) {
+                    entry.1 = if entry.1 == option { NOTHING } else { option };
+                    (entry.1 == option).then_some(picked)
+                } else {
+                    entry.1 = option;
+                    for (g, chosen, _) in st.wave_tune.iter_mut() {
+                        if g.options.iter().any(|o| is_activity(&o.seed)) {
+                            *chosen = NOTHING;
+                        }
+                    }
+                    None
+                };
+                let settings: Vec<String> = st
+                    .wave_tune
                     .iter()
                     .filter_map(|(g, chosen, _)| g.options.get(*chosen))
-                    .filter(|o| !o.any)
+                    .filter(|o| !o.any && !is_activity(&o.seed))
                     .map(|o| o.seed.clone())
-                    .collect()
+                    .collect();
+                (settings, activity)
             };
             c.show_wave_settings();
             c.st.borrow_mut().trailer = None;
-            c.player.send(Cmd::TuneWave(settings));
+            match activity {
+                Some(a) => c.player.send(Cmd::Wave(Source::Seed { station: a.seed, header: "Моя волна".into(), title: a.name })),
+                None => {
+                    c.st.borrow_mut().tune_seeds = settings.clone();
+                    c.player.send(Cmd::TuneWave(settings));
+                }
+            }
             c.start();
         })
     });
     app.on_reset_wave(|| {
         with_ctx(|c| {
             c.st.borrow_mut().trailer = None;
+            c.st.borrow_mut().tune_seeds.clear();
             c.player.send(Cmd::Wave(Source::Wave));
             c.start();
         })

@@ -1401,8 +1401,11 @@ impl Api {
         Ok(v.as_array().map(|a| a.iter().filter_map(|x| s(x.get("id"))).collect()).unwrap_or_default())
     }
 
-    pub fn wheel(&self) -> Res<Vec<WheelItem>> {
-        let (status, text) = self.send_text(self.desktop_req(Method::POST, "/wheel/new").json(&json!({})))?;
+    /// Колесо вайбов для играющей волны: по ней сервер решает, нужны ли «Назад к привычному»
+    /// и «Встряхнуть», как `wheelNew({context})` оригинала. Пустые `seeds` — без контекста.
+    pub fn wheel(&self, seeds: &[String]) -> Res<Vec<WheelItem>> {
+        let body = if seeds.is_empty() { json!({}) } else { json!({ "context": { "type": "WAVE", "data": { "seeds": seeds } } }) };
+        let (status, text) = self.send_text(self.desktop_req(Method::POST, "/wheel/new").json(&body))?;
         if !status.is_success() {
             return Err(format!("HTTP {status}: {}", short(&text)));
         }
@@ -1590,10 +1593,29 @@ impl Api {
     }
 
     /// Какие настройки есть у «Моей волны»: названия, картинки и seeds приходят с сервера.
+    /// Первая группа — «Под занятие»: у её вариантов seed — станция `activity:…`.
     pub fn wave_setting_groups(&self) -> Res<Vec<WaveSettingGroup>> {
         let v = self.get("/rotor/wave/settings", &[])?;
         let all = v.get("settingRestrictions").ok_or("нет settingRestrictions")?;
-        let groups = ["diversity", "moodEnergy", "language"]
+        let activities: Vec<WaveSettingOption> = v
+            .get("blocks")
+            .and_then(|b| b.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("contexts"))
+            .filter_map(|b| b.get("items")?.as_array())
+            .flatten()
+            .filter_map(|it| {
+                Some(WaveSettingOption {
+                    name: str_of(it, "name"),
+                    seed: format!("{}:{}", it.pointer("/id/type")?.as_str()?, it.pointer("/id/tag")?.as_str()?),
+                    image: it.get("fullImageUrl").and_then(|u| u.as_str()).map(|u| pic(u, 48)),
+                    any: false,
+                })
+            })
+            .collect();
+        let activity = (!activities.is_empty()).then(|| WaveSettingGroup { name: "Под занятие".into(), options: activities });
+        let groups = activity.into_iter().chain(["diversity", "moodEnergy", "language"]
             .iter()
             .filter_map(|key| all.get(*key))
             .map(|g| WaveSettingGroup {
@@ -1608,7 +1630,7 @@ impl Api {
                         any: o.get("unspecified").and_then(|u| u.as_bool()).unwrap_or(false),
                     }).collect())
                     .unwrap_or_default(),
-            })
+            }))
             .collect();
         Ok(groups)
     }
