@@ -1670,6 +1670,20 @@ impl Api {
         .map(|v| crate::config::log(format!("dislike {action} {track_full_id}: {v}")))
     }
 
+    pub fn dislike_artist(&self, uid: &str, id: &str, remove: bool) -> Res<()> {
+        let action = if remove { "remove" } else { "add-multiple" };
+        self.send(self.req(Method::POST, &format!("/users/{uid}/dislikes/artists/{action}")).form(&[("artist-ids", id)]))
+            .map(|_| ())
+    }
+
+    /// Исполнители с дизлайком, новые сверху.
+    pub fn disliked_artists(&self, uid: &str) -> Res<Vec<Artist>> {
+        let v = self.get(&format!("/users/{uid}/dislikes/artists"), &[("with-timestamps", "false")])?;
+        Ok(v.as_array()
+            .map(|a| a.iter().filter_map(|x| parse_artist(x.get("artist").unwrap_or(x))).collect())
+            .unwrap_or_default())
+    }
+
     pub fn disliked_ids(&self, uid: &str) -> Res<Vec<String>> {
         let v = self.get(&format!("/users/{uid}/dislikes/tracks"), &[])?;
         Ok(v.pointer("/library/tracks")

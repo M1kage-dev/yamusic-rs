@@ -97,6 +97,7 @@ struct Block {
     text: String,
     bg: Option<[u8; 3]>,
     liked: bool,
+    disliked: bool,
 }
 
 impl Block {
@@ -399,6 +400,7 @@ impl St {
             if let (Entity::Artist(id), Some(h)) = (&d.entity, d.head.first_mut()) {
                 if h.kind == ARTIST_HEAD {
                     h.liked = now::artist_liked(id);
+                    h.disliked = now::artist_disliked(id);
                 }
             }
         }
@@ -713,11 +715,17 @@ fn action(b: usize, n: i32) {
                 s.player.send(Cmd::Wave(Source::Seed { station: format!("artist:{id}"), header: "Моя волна по исполнителю".into(), title: name }));
                 s.player.send(Cmd::Resume);
             }
-            (0, Entity::Artist(id)) => {
-                let liked = now::toggle_artist(id);
+            (0 | 3, Entity::Artist(id)) => {
+                if n == 0 {
+                    now::toggle_artist(id);
+                } else {
+                    now::toggle_artist_dislike(id);
+                }
+                let (liked, disliked) = (now::artist_liked(id), now::artist_disliked(id));
                 if let Some(e) = s.stack.last_mut() {
                     if let Some(bl) = e.data.as_mut().and_then(|d| d.visible_mut(b)) {
                         bl.liked = liked;
+                        bl.disliked = disliked;
                     }
                 }
                 s.rebuild_block(b);
@@ -892,6 +900,7 @@ fn pblock(b: &Block, rows: Range<usize>, icons: &Icons) -> PBlock {
         text: b.text.clone().into(),
         bg: color(b.bg, Color::from_rgb_u8(0x55, 0x55, 0x55)),
         liked: b.liked,
+        disliked: b.disliked,
     }
 }
 

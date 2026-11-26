@@ -84,6 +84,8 @@ struct State {
     artist_shown: Option<Arc<Data>>,
     artist_tracks: Vec<Track>,
     liked_artists: std::collections::HashSet<String>,
+    /// None, пока список не пришёл с сервера.
+    disliked_artists: Option<std::collections::HashSet<String>>,
     menu_track: Option<Track>,
     /// Только что созданный плейлист: когда откроется, сразу править название.
     rename_key: Option<String>,
@@ -1952,6 +1954,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             artist_shown: None,
             artist_tracks: Vec::new(),
             liked_artists: Default::default(),
+            disliked_artists: None,
             menu_track: None,
             rename_key: None,
             menu_playlists: Vec::new(),
@@ -3020,6 +3023,7 @@ impl Ctx {
                 app.set_ar_listeners(a.listeners.map(crate::net::listeners_word).unwrap_or_default().into());
                 app.set_ar_tint(a.color.map(|c| Color::from_argb_u8(178, c[0], c[1], c[2])).unwrap_or(Color::from_argb_u8(0, 0, 0, 0)));
                 app.set_ar_liked(self.st.borrow().liked_artists.contains(&a.id));
+                self.load_disliked_artists();
                 app.set_ar_pinned(self.st.borrow().pins.iter().any(|p| p.target == key));
                 app.set_ar_popular(self.track_model(&a.popular));
                 let fam = if a.familiar_tracks > 0 {
@@ -3566,11 +3570,52 @@ impl Ctx {
     fn open_artist_menu(self: &Rc<Self>, x: f32, y: f32) {
         let ui = self.ui();
         let icons = ui.global::<Icons>();
+        let disliked = self.current_artist().is_some_and(|(id, _)| self.st.borrow().disliked_artists.as_ref().is_some_and(|d| d.contains(&id)));
         let items = vec![
             self.menu_entry("artist-vibe", "Моя волна по исполнителю", icons.get_m_vibe(), false),
+            if disliked {
+                self.menu_entry("artist-dislike", "Убрать из «Не нравится»", icons.get_m_disliked(), false)
+            } else {
+                self.menu_entry("artist-dislike", "Не нравится", icons.get_m_dislike(), false)
+            },
             self.menu_entry("artist-share", "Поделиться", icons.get_m_share(), false),
         ];
         self.show_menu(items, x, y, false);
+    }
+
+    fn load_disliked_artists(self: &Rc<Self>) {
+        if self.st.borrow().disliked_artists.is_some() {
+            return;
+        }
+        let Some(net) = self.st.borrow().net.clone() else { return };
+        let uid = self.st.borrow().uid.clone();
+        std::thread::spawn(move || {
+            let Ok(list) = net.api.disliked_artists(&uid) else { return };
+            let ids = list.into_iter().map(|a| a.id).collect();
+            let _ = slint::invoke_from_event_loop(move || with_ctx(|c| c.st.borrow_mut().disliked_artists = Some(ids)));
+        });
+    }
+
+    fn toggle_artist_dislike(self: &Rc<Self>, id: String, name: String) {
+        let disliked = {
+            let mut st = self.st.borrow_mut();
+            let set = st.disliked_artists.get_or_insert_default();
+            let disliked = !set.remove(&id);
+            if disliked {
+                set.insert(id.clone());
+            }
+            disliked
+        };
+        if disliked && self.st.borrow_mut().liked_artists.remove(&id) {
+            self.ui().global::<App>().set_ar_liked(false);
+        }
+        let Some(net) = self.st.borrow().net.clone() else { return };
+        let uid = self.st.borrow().uid.clone();
+        std::thread::spawn(move || match net.api.dislike_artist(&uid, &id, !disliked) {
+            Ok(()) if disliked => net.say(format!("{name}: не нравится")),
+            Ok(()) => net.say(format!("{name} убран из «Не нравится»")),
+            Err(e) => net.say(format!("Не удалось сохранить: {e}")),
+        });
     }
 
     fn show_menu(&self, items: Vec<MenuEntry>, x: f32, y: f32, below: bool) {
@@ -3648,6 +3693,7 @@ impl Ctx {
                     self.player.send(Cmd::Wave(Source::Seed { station: format!("artist:{aid}"), header: "Моя волна по исполнителю".into(), title: name }));
                     self.start();
                 }
+                "dislike" => self.toggle_artist_dislike(aid, name),
                 "share" => {
                     sys::copy_text(&format!("https://music.yandex.ru/artist/{aid}"));
                     self.toast("Ссылка скопирована");
@@ -4631,6 +4677,9 @@ fn register_extra(app: &App) {
             let liked = !c.st.borrow().liked_artists.contains(&id);
             if liked {
                 c.st.borrow_mut().liked_artists.insert(id.clone());
+                if let Some(d) = c.st.borrow_mut().disliked_artists.as_mut() {
+                    d.remove(&id);
+                }
             } else {
                 c.st.borrow_mut().liked_artists.remove(&id);
             }
