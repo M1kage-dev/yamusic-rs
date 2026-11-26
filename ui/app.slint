@@ -1,7 +1,7 @@
 // Главное окно: своя рамка, навбар, страницы, нижний плеер и всплывающие слои поверх.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, IconButton, CircleButton, PillButton, Cover, Shimmer, Fade } from "widgets.slint";
+import { Icons, Icon, IconButton, CircleButton, PillButton, Cover, Shimmer, Fade, TipLayer } from "widgets.slint";
 import { Navbar } from "navbar.slint";
 import { PlayerBar, MiniPlayer } from "playerbar.slint";
 import { ListPage } from "list.slint";
@@ -446,6 +446,13 @@ export component AppWindow inherits Window {
     }
 
     if App.mini: MiniPlayer {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    TipLayer {
         x: 0;
         y: 0;
         width: parent.width;

@@ -626,6 +626,11 @@ export global App {
     callback minimize();
     // Мини-плеер поверх всех окон.
     in-out property <bool> mini;
+    // Всплывающая подсказка: текст и точка привязки в окне. Сверху — над точкой, иначе справа от неё.
+    in-out property <string> tip;
+    in-out property <length> tip-x;
+    in-out property <length> tip-y;
+    in-out property <bool> tip-above;
     callback toggle-mini();
     callback close();
 
