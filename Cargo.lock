@@ -6609,7 +6609,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "yamusic-rs"
-version = "1.0.10+upstream.1.1.8"
+version = "1.0.11+upstream.1.1.9"
 dependencies = [
  "arboard",
  "async-io",
