@@ -89,13 +89,22 @@ export global Pages {
     in property <string> menu-duration;
     in property <bool> menu-liked;
     callback menu(int, int);
-    // 0 волна по треку, 1 лайк, 2 следующим, 3 в очередь, 4 поделиться, 6 альбом, 7 исполнитель, 8 дизлайк.
+    // 0 волна по треку, 1 лайк, 2 следующим, 3 в очередь, 4 поделиться, 6 альбом, 7 исполнитель, 8 дизлайк, 10 о треке.
     callback menu-action(int);
     callback pick(int);
 
     in-out property <bool> artists-open;
     in property <[string]> artist-names;
     callback pick-artist(int);
+
+    // «О треке»: участники записи, роль над именем.
+    in-out property <bool> about-open;
+    in property <string> about-title;
+    in property <string> about-artists;
+    in property <[string]> about-roles;
+    in property <[string]> about-names;
+    in property <string> about-status;
+    callback about-current();
 }
 
 // Номера видов блоков, те же в pages.rs.

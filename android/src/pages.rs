@@ -258,6 +258,11 @@ pub fn start(ui: &App, api: Arc<Api>, player: Player) {
         menu(b, first + i as usize)
     });
     p.on_menu_action(menu_action);
+    p.on_about_current(|| {
+        if let Some(t) = with(|s| s.player.state().track).flatten() {
+            about(&t);
+        }
+    });
     p.on_pick(|i| pick(i as usize));
     p.on_pick_artist(|i| {
         if let Some(id) = ARTIST_IDS.with(|ids| ids.borrow().get(i as usize).cloned()) {
@@ -636,8 +641,39 @@ fn menu_action(n: i32) {
         7 => open_artists(&t.artist_list),
         8 => player.send(Cmd::DislikeTrack(t)),
         9 => crate::download::start(api, "", vec![t]),
+        10 => about(&t),
         _ => {}
     }
+}
+
+/// Шторка «О треке»: шапка сразу, участники записи — когда придут.
+pub fn about(t: &Track) {
+    let Some((Some(ui), api)) = with(|s| (s.ui.upgrade(), s.api.clone())) else { return };
+    let pages = ui.global::<Pages>();
+    let title = if t.version.is_empty() { t.title.clone() } else { format!("{} ({})", t.title, t.version) };
+    pages.set_about_title(title.into());
+    pages.set_about_artists(t.artists.clone().into());
+    pages.set_about_roles(ModelRc::default());
+    pages.set_about_names(ModelRc::default());
+    pages.set_about_status("Загрузка…".into());
+    pages.set_about_open(true);
+    let id = t.id.clone();
+    std::thread::spawn(move || {
+        let res = api.track_credits(&id);
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = crate::UI.get().and_then(|w| w.upgrade()) else { return };
+            let pages = ui.global::<Pages>();
+            match res {
+                Ok(credits) if credits.is_empty() => pages.set_about_status("Нет данных об участниках записи".into()),
+                Ok(credits) => {
+                    let (roles, names): (Vec<SharedString>, Vec<SharedString>) = credits.into_iter().map(|(r, n)| (r.into(), n.into())).unzip();
+                    pages.set_about_roles(ModelRc::new(VecModel::from(roles)));
+                    pages.set_about_names(ModelRc::new(VecModel::from(names)));
+                }
+                Err(e) => pages.set_about_status(format!("Не удалось загрузить: {e}").into()),
+            }
+        });
+    });
 }
 
 fn pick(i: usize) {
