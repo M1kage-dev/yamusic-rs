@@ -65,6 +65,8 @@ struct State {
     landing_key: Option<String>,
     net: Option<Net>,
     pins: Vec<Pin>,
+    /// Когда закрепы последний раз сверялись с сервером: их могли поменять в другом клиенте.
+    pins_checked: Option<Instant>,
     playlists: Vec<Playlist>,
     albums: Vec<Album>,
     coll_shown: Option<Arc<Data>>,
@@ -429,6 +431,10 @@ impl Ctx {
     }
 
     fn set_pins(self: &Rc<Self>, pins: Vec<Pin>) {
+        // Без изменений не пересобираем: обложки мигнули бы.
+        if self.st.borrow().pins == pins {
+            return;
+        }
         let items: Vec<PinItem> = pins
             .iter()
             .map(|p| PinItem { title: p.title.clone().into(), subtitle: p.subtitle.clone().into(), cover: Image::default(), round: p.round })
@@ -457,6 +463,7 @@ impl Ctx {
         };
         let ui = self.ui();
         let app = ui.global::<App>();
+        self.check_pins();
         // Поле ввода старой страницы исчезает вместе с ней и о потере фокуса не сообщает.
         app.set_text_focused(false);
         let from = app.get_page();
@@ -1969,6 +1976,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
             grid_tab: 0,
             net: None,
             pins: Vec::new(),
+            pins_checked: None,
             playlists: Vec::new(),
             albums: Vec::new(),
             coll_shown: None,
@@ -3483,6 +3491,18 @@ impl Ctx {
             Self::refresh_playlist(&net, &uid, &kind);
             Self::reload_pins(&net);
         });
+    }
+
+    /// При переходах по разделам, но не чаще раза в минуту.
+    fn check_pins(&self) {
+        let Some(net) = self.st.borrow().net.clone() else { return };
+        let now = Instant::now();
+        let due = self.st.borrow().pins_checked.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(60));
+        if !due {
+            return;
+        }
+        self.st.borrow_mut().pins_checked = Some(now);
+        std::thread::spawn(move || Self::reload_pins(&net));
     }
 
     fn reload_pins(net: &Net) {

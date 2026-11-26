@@ -207,7 +207,7 @@ impl WheelItem {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pin {
     pub title: String,
     pub subtitle: String,
