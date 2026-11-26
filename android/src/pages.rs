@@ -1206,7 +1206,20 @@ fn fetch(api: &Api, uid: &str, key: &Key) -> Result<PageData, String> {
                 .take(300)
                 .collect();
             let tracks = if ids.is_empty() { Vec::new() } else { api.tracks(&ids)? };
-            PageData::new("Ваши дизлайки", vec![Block::tracks("", tracks)])
+            let artists = api
+                .disliked_artists(uid)?
+                .into_iter()
+                .map(|a| LCard { title: a.name, covers: a.cover.into_iter().collect(), round: true, target: format!("artist:{}", a.id), ..Default::default() })
+                .collect();
+            let or_empty = |b: Block| if b.is_empty() { Block { text: "Здесь пока пусто".into(), ..Block::new(EMPTY, "") } } else { b };
+            let tabs = vec![
+                ("Треки".to_string(), vec![or_empty(Block::tracks("", tracks))]),
+                ("Исполнители".to_string(), vec![or_empty(Block::cards(GRID, "", artists))]),
+            ];
+            let mut d = PageData::new("Ваши дизлайки", vec![]);
+            d.head.push(Block { tabs: tabs.iter().map(|t| (t.0.clone(), Vec::new())).collect(), ..Block::new(CHIPS, "") });
+            d.tabs = tabs;
+            d
         }
         Key::Playlists | Key::Albums => {
             let (block, title, kind) = if *key == Key::Playlists {

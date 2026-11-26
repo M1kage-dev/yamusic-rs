@@ -615,6 +615,7 @@ impl Ctx {
                 "ar-compilations" => one(net.api.artist_albums(arg, "also-albums")),
                 "ar-similar" => one(net.api.similar_artists(arg)),
                 "entities" => one(net.api.block_entities(arg)),
+                "disliked-artists" => one(net.api.disliked_artists(&net.uid).map(|list| list.iter().map(crate::api::artist_card).collect())),
                 _ => Ok(vec![(String::new(), cached)]),
             };
             let _ = slint::invoke_from_event_loop(move || {
@@ -2856,6 +2857,7 @@ impl Ctx {
     fn open_card(self: &Rc<Self>, block: &str, i: usize) {
         match block {
             "chart" => return self.navigate(Page::Chart, None, true),
+            "dislikes" => return self.navigate(Page::List, Some("dislikes".into()), true),
             "artist-tracks" => {
                 if let Some((id, _)) = self.current_artist() {
                     self.navigate(Page::List, Some(format!("artist-tracks:{id}")), true);
@@ -4238,7 +4240,8 @@ impl Ctx {
     fn dislike(self: &Rc<Self>) {
         let net = self.st.borrow().net.clone();
         self.player.send(Cmd::Dislike(Some(Box::new(move |track, added, result| {
-            if let Some(net) = net.filter(|_| added && result.is_ok()) { net.dislike_saved(track); }
+            let Some(net) = net.filter(|_| result.is_ok()) else { return };
+            if added { net.dislike_saved(track) } else { net.forget("dislikes") }
         }))));
     }
 
