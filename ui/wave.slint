@@ -1,7 +1,7 @@
 // «Моя волна»: колесо вайбов, кнопка запуска и фоновое пятно в цветах трека.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, HoverIcon, BarButton, Cover } from "widgets.slint";
+import { Icons, Icon, HoverIcon, BarButton, Cover, ScrollBar } from "widgets.slint";
 import { T, App, WheelEntry, WaveOption } from "state.slint";
 import { VolumePopup } from "popups.slint";
 
@@ -330,11 +330,14 @@ component TunePill inherits Rectangle {
 
 // Настройки «Моей волны»: по варианту из каждой группы, выбор сразу перезапускает волну.
 // Ширина 410, как у VibeSettings_popover; варианты по два в ряд.
+// Не влезает в окно — группы листаются, заголовок остаётся на месте.
 component WaveTune inherits Rectangle {
+    in property <length> limit: 100000px;
     property <length> pad: 20px;
     property <length> cell: (self.width - 2 * self.pad - 8px) / 2;
     width: 410px;
-    height: 68px + self.groups-h;
+    height: min(68px + self.groups-h, self.limit);
+    clip: true;
     property <length> groups-h: self.rows-before(App.wave-settings.length);
     pure function rows-before(n: int) -> length {
         // У групп разное число вариантов, поэтому высота считается по каждой.
@@ -360,27 +363,38 @@ component WaveTune inherits Rectangle {
         font-weight: 700;
         color: Theme.controls-color-primary-text-enabled-variant;
     }
-    for group[g] in App.wave-settings: Rectangle {
-        x: root.pad;
-        y: 64px + root.rows-before(g);
-        width: parent.width - 2 * root.pad;
-        height: root.group-h(g);
-        Text {
-            x: 0;
-            y: 0;
-            width: parent.width;
-            text: group.name;
-            horizontal-alignment: left;
-            font-size: Theme.font-size-label-s;
-            color: Theme.controls-color-primary-text-enabled;
+    flick := Flickable {
+        y: 64px;
+        height: root.height - 64px;
+        content-height: root.groups-h + 4px;
+        for group[g] in App.wave-settings: Rectangle {
+            x: root.pad;
+            y: root.rows-before(g);
+            width: root.width - 2 * root.pad;
+            height: root.group-h(g);
+            Text {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                text: group.name;
+                horizontal-alignment: left;
+                font-size: Theme.font-size-label-s;
+                color: Theme.controls-color-primary-text-enabled;
+            }
+            for option[o] in group.options: TuneChip {
+                x: mod(o, 2) * (root.cell + 8px);
+                y: 28px + floor(o / 2) * 44px;
+                width: root.cell;
+                option: option;
+                clicked => { App.tune-wave(g, o); }
+            }
         }
-        for option[o] in group.options: TuneChip {
-            x: mod(o, 2) * (root.cell + 8px);
-            y: 28px + floor(o / 2) * 44px;
-            width: root.cell;
-            option: option;
-            clicked => { App.tune-wave(g, o); }
-        }
+    }
+    if flick.content-height > flick.height: ScrollBar {
+        y: flick.y;
+        height: flick.height;
+        content-y <=> flick.content-y;
+        content-height: flick.content-height;
     }
 }
 
@@ -675,6 +689,22 @@ export component WavePage inherits Rectangle {
         }
     }
 
+    // Версия в правом нижнем углу, как у официального приложения.
+    Rectangle {
+        x: parent.width - self.width;
+        y: parent.height - 38px;
+        width: ver.preferred-width + 16px;
+        height: 26px;
+        border-radius: 16px;
+        background: #ffffff14;
+        ver := Text {
+            text: App.version;
+            font-size: Theme.font-size-label-s;
+            font-weight: 500;
+            color: #ffffff80;
+        }
+    }
+
     // Настройки «Моей волны» — только у неё самой и пока она не играет, как у оригинала.
     tune := TunePill {
         x: cx - self.width / 2;
@@ -691,23 +721,8 @@ export component WavePage inherits Rectangle {
     // Панель справа от кнопки; в узком окне прижимается к правому краю.
     // Из челки панель открывается под ней.
     if App.wave-settings-open: WaveTune {
+        limit: min(480px, root.tune-from-top ? parent.height - 80px - 16px : parent.height - 32px);
         x: root.tune-from-top ? clamp(cx - self.width / 2, 16px, parent.width - self.width - 16px) : min(tune.x + tune.width + 12px, parent.width - self.width - 16px);
         y: root.tune-from-top ? 80px : clamp(tune.y + tune.height - self.height, 16px, parent.height - self.height - 16px);
-    }
-
-    // Версия в правом нижнем углу, как у официального приложения.
-    Rectangle {
-        x: parent.width - self.width;
-        y: parent.height - 38px;
-        width: ver.preferred-width + 16px;
-        height: 26px;
-        border-radius: 16px;
-        background: #ffffff14;
-        ver := Text {
-            text: App.version;
-            font-size: Theme.font-size-label-s;
-            font-weight: 500;
-            color: #ffffff80;
-        }
     }
 }
