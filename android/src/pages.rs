@@ -54,6 +54,7 @@ enum Key {
     Search,
     Results(String),
     Landing(String, usize, String),
+    Tag(String),
     Artist(String),
     ArtistTracks(String),
     ArtistAlbums(String),
@@ -544,8 +545,9 @@ fn open_target(target: &str, title: &str) {
             let tab = p.next().and_then(|t| t.parse().ok()).unwrap_or(0);
             Key::Landing(skel, tab, title.into())
         }
-        "tag" | "query" => {
-            let q = if kind == "query" { arg } else { title };
+        "tag" => Key::Tag(arg.into()),
+        "query" => {
+            let q = arg;
             with(|s| {
                 s.open(Key::Search);
                 if let Some(ui) = s.ui.upgrade() {
@@ -798,9 +800,9 @@ fn search_edited(text: String, delay: Duration) {
             }
             return;
         }
+        let api = s.api.clone();
         let run = move || {
-            let Some(api) = with(|s| s.api.clone()) else { return };
-            let text = text.clone();
+            let (api, text) = (api.clone(), text.clone());
             std::thread::spawn(move || {
                 let res = fetch(&api, "", &Key::Results(text));
                 let _ = slint::invoke_from_event_loop(move || {
@@ -1106,6 +1108,10 @@ fn fetch(api: &Api, uid: &str, key: &Key) -> Result<PageData, String> {
             let defs = tabs.get(*tab).or(tabs.first()).map(|t| t.1.clone()).unwrap_or_default();
             head.extend(load_blocks(api, &defs));
             PageData { has_search: true, ..PageData::new(title, head) }
+        }
+        Key::Tag(id) => {
+            let (title, cards) = api.tag_playlists(id)?;
+            PageData::new(&title, vec![Block::cards(GRID, "", cards.iter().map(lcard_from).collect())])
         }
         Key::Concerts => {
             let v = api.get_raw(FEED)?;
