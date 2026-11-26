@@ -1850,6 +1850,7 @@ fn set_icons(ui: &AppWindow, sprite: &Sprite) {
     icons.set_m_disliked(get("disliked_xxs"));
     icons.set_m_add_playlist(get("addToPlaylist_xxs"));
     icons.set_m_lyrics(get("lyrics_xxs"));
+    icons.set_m_queue(get("playQueue_xxs"));
     icons.set_m_share(get("share_xxs"));
     icons.set_m_pin(get("pin_xxs"));
     icons.set_m_unpin(get("unpin_xxs"));
@@ -3165,6 +3166,7 @@ impl Ctx {
                 self.menu_entry("dislike", "Не нравится", icons.get_m_dislike(), false)
             };
             items.push(entry);
+            items.push(self.menu_entry("queue", "Открыть очередь", icons.get_m_queue(), false));
         }
         items.push(self.menu_entry("playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
         if t.lyrics && current {
@@ -3834,6 +3836,7 @@ impl Ctx {
             }
             "dislike" => self.dislike(),
             "lyrics" => self.open_fullscreen(2),
+            "queue" => self.open_fullscreen(1),
             "share-link" => {
                 sys::copy_text(&track_link(&t));
                 self.toast("Ссылка скопирована");
