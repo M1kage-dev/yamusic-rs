@@ -201,13 +201,18 @@ component FitTitle inherits Rectangle {
     }
 }
 
-// «Челка» над пятном: источник волны и отдельная круглая кнопка сброса.
+// «Челка» над пятном: источник волны и отдельная круглая кнопка сброса. У волны челка со
+// стрелкой открывает её настройки, как VibeContextButton оригинала.
 component ContextPill inherits Rectangle {
     in property <string> text;
+    in property <bool> menu;
+    in property <bool> menu-open;
     callback reset;
+    callback toggle;
     height: 48px;
     property <length> btn: 48px;
-    property <length> pill-w: min(label.preferred-width + 48px, root.width - btn - 4px);
+    property <length> arrow: root.menu ? 24px : 0px;
+    property <length> pill-w: min(label.preferred-width + 48px + arrow, root.width - btn - 4px);
     pill := Rectangle {
         x: (root.width - pill-w - 4px - btn) / 2;
         width: pill-w;
@@ -216,7 +221,7 @@ component ContextPill inherits Rectangle {
         animate background { duration: App.motion ? Theme.duration-transition : 0ms; }
         label := Text {
             x: 24px;
-            width: parent.width - 48px;
+            width: parent.width - 48px - root.arrow;
             text: root.text;
             overflow: elide;
             horizontal-alignment: center;
@@ -226,9 +231,22 @@ component ContextPill inherits Rectangle {
             font-weight: 700;
             color: Theme.logo-color-primary-player;
         }
+        if root.menu: Icon {
+            x: parent.width - 24px - 20px;
+            source: Icons.arrow-down;
+            size: 20px;
+            colorize: Theme.logo-color-primary-player;
+            transform-rotation: root.menu-open ? 180deg : 0deg;
+        }
         pill-ta := TouchArea {
             mouse-cursor: MouseCursor.pointer;
-            clicked => { root.reset(); }
+            clicked => {
+                if root.menu {
+                    root.toggle();
+                } else {
+                    root.reset();
+                }
+            }
         }
     }
     Rectangle {
@@ -384,6 +402,7 @@ export component WavePage inherits Rectangle {
     property <float> progress: App.duration > 0 ? App.position / App.duration : 0;
     property <float> drag-progress: -1;
     property <float> shown: drag-progress >= 0 ? drag-progress : progress;
+    property <bool> tune-from-top;
 
     // Пятно: картинка оригинала, перекрашенная под трек. С движением медленно вращается,
     // дышит и плывёт; периоды взаимно простые, чтобы рисунок не повторялся.
@@ -466,7 +485,17 @@ export component WavePage inherits Rectangle {
         y: 24px;
         width: text-w;
         text: App.source-title;
+        menu: App.is-wave;
+        menu-open: App.wave-settings-open;
         reset => { App.reset-wave(); }
+        toggle => {
+            if App.wave-settings-open {
+                App.wave-settings-open = false;
+            } else {
+                root.tune-from-top = true;
+                App.open-wave-settings();
+            }
+        }
     }
 
     // Сохраняем размер оригинала, пока заголовок помещается в одну строку.
@@ -651,15 +680,19 @@ export component WavePage inherits Rectangle {
         x: cx - self.width / 2;
         y: 664px + dp;
         visible: !App.wave-context && (!App.has-track || paused);
-        clicked => { App.open-wave-settings(); }
+        clicked => {
+            root.tune-from-top = false;
+            App.open-wave-settings();
+        }
     }
     if App.wave-settings-open: TouchArea {
         clicked => { App.wave-settings-open = false; }
     }
     // Панель справа от кнопки; в узком окне прижимается к правому краю.
+    // Из челки панель открывается под ней.
     if App.wave-settings-open: WaveTune {
-        x: min(tune.x + tune.width + 12px, parent.width - self.width - 16px);
-        y: clamp(tune.y + tune.height - self.height, 16px, parent.height - self.height - 16px);
+        x: root.tune-from-top ? clamp(cx - self.width / 2, 16px, parent.width - self.width - 16px) : min(tune.x + tune.width + 12px, parent.width - self.width - 16px);
+        y: root.tune-from-top ? 80px : clamp(tune.y + tune.height - self.height, 16px, parent.height - self.height - 16px);
     }
 
     // Версия в правом нижнем углу, как у официального приложения.
