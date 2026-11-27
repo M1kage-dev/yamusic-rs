@@ -1315,8 +1315,9 @@ impl Ctx {
         let cur = (|| {
             let data = self.list()?;
             let Data::List(l) = &*data else { return None };
-            let Source::List { id, .. } = &s.source else { return None };
-            if *id != Self::list_id(l) {
+            // Трек из другого списка подсвечивается на странице своего альбома, как у оригинала (#188).
+            let same_list = matches!(&s.source, Source::List { id, .. } if *id == Self::list_id(l));
+            if !same_list && l.kind != ListKind::Album {
                 return None;
             }
             let tid = &s.track.as_ref()?.id;
