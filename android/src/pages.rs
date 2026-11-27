@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -140,6 +141,8 @@ struct PageData {
     title: String,
     overlay: bool,
     has_search: bool,
+    /// «Мои плейлисты» как есть, чтобы пересортировать вкладки без запроса.
+    playlists: Vec<(String, Vec<api::Playlist>)>,
     head: Vec<Block>,
     /// Вкладки страницы («Популярное / История»): полоса вкладок встаёт после head.
     tabs: Vec<(String, Vec<Block>)>,
@@ -250,6 +253,7 @@ pub fn start(ui: &App, api: Arc<Api>, player: Player) {
     });
     p.on_more(|b| more(part(b).0));
     p.on_chip(|b, i| chip(part(b).0, i as usize));
+    p.on_sort_picked(sort_picked);
     p.on_action(|b, n| action(part(b).0, n));
     p.on_search_edited(|t| search_edited(t.to_string(), Duration::from_millis(450)));
     p.on_search_submit(|t| search_edited(t.to_string(), Duration::ZERO));
@@ -421,6 +425,7 @@ impl St {
             overlay: d.is_some_and(|d| d.overlay),
             search: matches!(e.key, Key::Search),
             has_search: d.is_some_and(|d| d.has_search),
+            has_sort: d.is_some_and(|d| !d.playlists.is_empty()),
             root: is_root,
             loading: e.data.is_none() && e.error.is_empty(),
             error: e.error.clone().into(),
@@ -691,6 +696,36 @@ fn more(b: usize) {
     if let Some(key) = with(|s| s.block(b).and_then(|b| b.more)).flatten() {
         push(key);
     }
+}
+
+/// Порядок «Моих плейлистов» из шторки «Сортировка»; живёт до закрытия приложения.
+static PLAYLIST_SORT: AtomicI32 = AtomicI32::new(0);
+
+fn sorted_playlists(tabs: &[(String, Vec<api::Playlist>)], sort: i32) -> Vec<(String, Vec<Block>)> {
+    tabs.iter()
+        .map(|(title, list)| {
+            let mut list: Vec<&api::Playlist> = list.iter().collect();
+            match sort {
+                1 => list.sort_by(|a, b| b.modified.cmp(&a.modified)),
+                2 => list.sort_by_cached_key(|p| p.title.to_lowercase()),
+                _ => {}
+            }
+            let cards = list.into_iter().map(|p| lcard_from(&api::playlist_card(p))).collect();
+            (title.clone(), vec![Block::cards(ROWS, "", cards)])
+        })
+        .collect()
+}
+
+fn sort_picked(sort: i32) {
+    PLAYLIST_SORT.store(sort, Ordering::Relaxed);
+    with(|s| {
+        let Some(d) = s.stack.last_mut().and_then(|e| e.data.as_mut()) else { return };
+        if d.playlists.is_empty() {
+            return;
+        }
+        d.tabs = sorted_playlists(&d.playlists, sort);
+        s.show();
+    });
 }
 
 fn chip(b: usize, i: usize) {
@@ -1263,16 +1298,19 @@ fn fetch(api: &Api, uid: &str, key: &Key) -> Result<PageData, String> {
             d.tabs = tabs;
             d
         }
-        Key::Playlists | Key::Albums => {
-            let (block, title, kind) = if *key == Key::Playlists {
-                ("playlists-liked-and-playlists-created", "Плейлисты", ROWS)
-            } else {
-                ("albums-liked-and-albums-presaved", "Альбомы", GRID)
-            };
-            let tabs: Vec<(String, Vec<LCard>)> = api.collection_tabs(block)?.into_iter().map(|(t, c)| (t, c.iter().map(lcard_from).collect())).collect();
-            let mut d = PageData::new(title, vec![]);
+        Key::Playlists => {
+            let playlists = api.collection_playlists()?;
+            let mut d = PageData::new("Плейлисты", vec![]);
+            d.head.push(Block { tabs: playlists.iter().map(|t| (t.0.clone(), Vec::new())).collect(), ..Block::new(CHIPS, "") });
+            d.tabs = sorted_playlists(&playlists, PLAYLIST_SORT.load(Ordering::Relaxed));
+            d.playlists = playlists;
+            d
+        }
+        Key::Albums => {
+            let tabs: Vec<(String, Vec<LCard>)> = api.collection_tabs("albums-liked-and-albums-presaved")?.into_iter().map(|(t, c)| (t, c.iter().map(lcard_from).collect())).collect();
+            let mut d = PageData::new("Альбомы", vec![]);
             d.head.push(Block { tabs: tabs.iter().map(|t| (t.0.clone(), Vec::new())).collect(), ..Block::new(CHIPS, "") });
-            d.tabs = tabs.into_iter().map(|(t, c)| (t, vec![Block::cards(kind, "", c)])).collect();
+            d.tabs = tabs.into_iter().map(|(t, c)| (t, vec![Block::cards(GRID, "", c)])).collect();
             d
         }
         Key::History => {

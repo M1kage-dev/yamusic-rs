@@ -1492,6 +1492,13 @@ impl Api {
         })
     }
 
+    /// Вкладки «Мои плейлисты» самими плейлистами: на телефоне их сортируют по дате и названию.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn collection_playlists(&self) -> Res<Vec<(String, Vec<Playlist>)>> {
+        let v = self.get_raw("/landing-blocks/collection/playlists-liked-and-playlists-created?count=500")?;
+        Ok(tabs(&v, "playlist", parse_playlist))
+    }
+
     /// Все альбомы исполнителя: path — discography-albums (студийные), direct-albums или also-albums (сборники).
     /// От новых к старым: страницы альбомов оригинала всегда просят `sort-by=year` (#91).
     pub fn artist_albums(&self, id: &str, path: &str) -> Res<Vec<Card>> {
