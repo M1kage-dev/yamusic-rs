@@ -1753,6 +1753,7 @@ fn finish_reveal(weak: slint::Weak<AppWindow>, first: bool, tries: u32) {
         keep_on_screen(ui.window());
     }
     sys::raise(ui.window());
+    Timer::single_shot(Duration::from_millis(150), || with_ctx(|c| full_repaint(&c.ui())));
 }
 
 fn notifier() -> Arc<dyn Fn() + Send + Sync> {
@@ -2637,10 +2638,9 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
                 after_move();
                 EventResult::Propagate
             }
-            // В i3 кадры, нарисованные до того, как окно показано и растянуто, теряются, а Slint
-            // дорисовывает только изменившееся: окно оставалось пустым кусками (#87).
-            // Ждём, пока окно сменит размер или станет видно.
-            #[cfg(target_os = "linux")]
+            // Кадры, нарисованные до того, как окно показано и растянуто, теряются (i3 — #87,
+            // Windows под нагрузкой при открытии из трея — #194), а Slint дорисовывает только
+            // изменившееся: окно оставалось пустым кусками. Ждём, пока окно сменит размер или станет видно.
             WindowEvent::Occluded(false) | WindowEvent::Focused(true) | WindowEvent::Resized(_) => {
                 Timer::single_shot(Duration::from_millis(150), || with_ctx(|c| full_repaint(&c.ui())));
                 EventResult::Propagate
