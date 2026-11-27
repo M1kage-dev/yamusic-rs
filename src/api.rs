@@ -81,6 +81,8 @@ pub struct Track {
     pub cutout: Option<String>,
     pub explicit: bool,
     pub lyrics: bool,
+    /// Популярный трек альбома (`bests`): у оригинала молния в строке.
+    pub best: bool,
     pub color: Option<[u8; 3]>,
     /// Для тегов скачанного файла: альбом, год, номер трека.
     pub album_title: String,
@@ -486,6 +488,7 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
         explicit: v.get("contentWarning").and_then(|c| c.as_str()) == Some("explicit")
             || v.get("explicit").and_then(|c| c.as_bool()).unwrap_or(false),
         lyrics: flag("hasAvailableSyncLyrics") || flag("hasAvailableTextLyrics"),
+        best: album.and_then(|a| a.get("bests")).and_then(Value::as_array).is_some_and(|b| b.iter().any(|x| s(Some(x)) == s(v.get("id")))),
         color: hex_color(v.pointer("/derivedColors/average")),
         album_title: album.map(|a| str_of(a, "title")).unwrap_or_default(),
         year: album.and_then(|a| a.get("year")).and_then(|y| y.as_u64()).map(|y| y as u32),
@@ -502,10 +505,14 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
 /// `albums[0].trackPosition.volume` первого трека тома.
 fn album_tracks(v: &Value) -> Vec<Track> {
     let vols: Vec<&Vec<Value>> = v.get("volumes").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_array).collect();
+    let bests: Vec<String> = v.get("bests").and_then(Value::as_array).into_iter().flatten().filter_map(|x| s(Some(x))).collect();
     let mut tracks: Vec<Track> = Vec::new();
     for (k, vol) in vols.iter().enumerate() {
         let start = tracks.len();
-        tracks.extend(vol.iter().filter_map(parse_track));
+        tracks.extend(vol.iter().filter_map(parse_track).map(|mut t| {
+            t.best |= bests.contains(&t.id);
+            t
+        }));
         if vols.len() > 1 {
             if let Some(first) = tracks.get_mut(start) {
                 let number = vol.first().and_then(|t| t.pointer("/albums/0/trackPosition/volume")).and_then(Value::as_u64);

@@ -1060,6 +1060,7 @@ impl Ctx {
             duration: mm_ss(t.duration_ms).into(),
             cover: Image::default(),
             explicit: t.explicit,
+            best: t.best,
             available: true,
             artist_names: ModelRc::from(Rc::new(VecModel::from(
                 t.artist_list.iter().map(|a| SharedString::from(a.name.as_str())).collect::<Vec<_>>(),
@@ -1986,6 +1987,7 @@ fn set_icons(ui: &AppWindow, sprite: &Sprite) {
     icons.set_play_small(get("play_xxs"));
     icons.set_trailer_small(get("trailer_xxs"));
     icons.set_like_small(get("like_xxs"));
+    icons.set_best(get("lightning_xxs"));
     icons.set_liked_small(get("liked_xxs"));
     icons.set_pin_small(get("pin_xxs"));
     icons.set_pin_filled_small(get("pin_filled_xxs"));
