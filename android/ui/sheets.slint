@@ -231,8 +231,8 @@ export component TrackSheet inherits Sheet {
     MenuItem {
         y: 660px;
         icon: Now.icons.dislike;
-        text: "Не нравится";
-        grey: true;
+        text: Pages.menu-disliked ? "Убрать из «Не нравится»" : "Не нравится";
+        grey: !Pages.menu-disliked;
         clicked => {
             root.open = false;
             Pages.menu-action(8);

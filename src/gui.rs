@@ -3457,13 +3457,14 @@ impl Ctx {
             self.menu_entry("next", "Играть следующим", icons.get_m_play_next(), false),
             self.menu_entry("last", "Добавить в конец очереди", icons.get_m_play_last(), false),
         ];
+        // Дизлайк снимается из меню любого трека, например в «Моих дизлайках» (#127).
+        let disliked = if current { self.player.state().disliked } else { self.player.is_disliked(&t.id) };
+        items.push(if disliked {
+            self.menu_entry("dislike", "Убрать из «Не нравится»", icons.get_m_disliked(), false)
+        } else {
+            self.menu_entry("dislike", "Не нравится", icons.get_m_dislike(), false)
+        });
         if current {
-            let entry = if self.player.state().disliked {
-                self.menu_entry("dislike", "Убрать из «Не нравится»", icons.get_m_disliked(), false)
-            } else {
-                self.menu_entry("dislike", "Не нравится", icons.get_m_dislike(), false)
-            };
-            items.push(entry);
             items.push(self.menu_entry("queue", "Открыть очередь", icons.get_m_queue(), false));
         }
         items.push(self.menu_entry("playlist", "Добавить в плейлист", icons.get_m_add_playlist(), true));
@@ -4422,7 +4423,13 @@ impl Ctx {
                 self.player.send(Cmd::Enqueue { tracks: vec![t], next });
                 self.toast_with_cover(msg, cover.as_deref());
             }
-            "dislike" => self.dislike(),
+            "dislike" if self.player.state().track.is_some_and(|c| c.id == t.id) => self.dislike(),
+            "dislike" => {
+                self.player.send(Cmd::DislikeTrack(t, Some(Box::new(move |track, added, result| {
+                    let Some(net) = net.filter(|_| result.is_ok()) else { return };
+                    if added { net.dislike_saved(track) } else { net.forget("dislikes") }
+                }))));
+            }
             "lyrics" => self.open_fullscreen(2),
             "queue" => self.open_fullscreen(1),
             "share-link" => {

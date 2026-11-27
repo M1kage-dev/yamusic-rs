@@ -117,8 +117,8 @@ pub enum Cmd {
     Loudness(Loudness),
     LikeTrack(Track, Option<LikeCompleted>),
     Dislike(Option<LikeCompleted>),
-    #[cfg(target_os = "android")]
-    DislikeTrack(Track),
+    /// Дизлайк трека из меню или снять его, если уже стоит; трек не пропускается.
+    DislikeTrack(Track, Option<LikeCompleted>),
     Wave(Source),
     /// Заново начать «Мою волну» с настройками (seeds `setting…`).
     TuneWave(Vec<String>),
@@ -161,6 +161,7 @@ pub struct Player {
     tx: Sender<Msg>,
     shared: Arc<Mutex<Shared>>,
     likes: Likes,
+    dislikes: Likes,
     pub eq: Arc<EqParams>,
 }
 
@@ -170,10 +171,15 @@ impl Player {
         let shared = Arc::new(Mutex::new(Shared { volume: 0.6, ..Default::default() }));
         let likes: Likes = Default::default();
         let eq: Arc<EqParams> = Default::default();
-        let p = Player { tx: tx.clone(), shared: shared.clone(), likes: likes.clone(), eq: eq.clone() };
+        let dislikes: Likes = Default::default();
+        let p = Player { tx: tx.clone(), shared: shared.clone(), likes: likes.clone(), dislikes: dislikes.clone(), eq: eq.clone() };
         thread::Builder::new()
             .name("audio".into())
-            .spawn(move || Engine::new(tx, shared, likes, notify, eq).run(rx))
+            .spawn(move || {
+                let mut engine = Engine::new(tx, shared, likes, notify, eq);
+                engine.dislikes = dislikes;
+                engine.run(rx)
+            })
             .expect("audio thread");
         p
     }
@@ -209,6 +215,10 @@ impl Player {
 
     pub fn is_liked(&self, id: &str) -> bool {
         self.likes.lock().unwrap().contains(id)
+    }
+
+    pub fn is_disliked(&self, id: &str) -> bool {
+        self.dislikes.lock().unwrap().contains(id)
     }
 
 }
@@ -465,7 +475,7 @@ struct Engine {
     // Запоминаем подтверждённые реакции, чтобы запоздалый список с сервера их не заменил.
     reaction_writes: HashMap<String, ReactionWrite>,
     reaction_seq: u64,
-    dislikes: HashSet<String>,
+    dislikes: Likes,
     notify: Notify,
     eq: Arc<EqParams>,
     audio: Option<(Output, Sink)>,
@@ -574,7 +584,7 @@ impl Engine {
             likes,
             reaction_writes: HashMap::new(),
             reaction_seq: 0,
-            dislikes: HashSet::new(),
+            dislikes: Default::default(),
             notify,
             eq,
             audio: None,
@@ -1305,7 +1315,7 @@ impl Engine {
                 self.account_retry = None;
                 self.reset();
                 self.reaction_writes.clear();
-                self.dislikes.clear();
+                self.dislikes.lock().unwrap().clear();
                 self.sh().disliked = false;
                 self.likes.lock().unwrap().clear();
                 self.likes_changed();
@@ -1328,7 +1338,7 @@ impl Engine {
                 self.uid.clear();
                 self.likes.lock().unwrap().clear();
                 self.reaction_writes.clear();
-                self.dislikes.clear();
+                self.dislikes.lock().unwrap().clear();
                 self.sh().disliked = false;
                 self.likes_changed();
                 let mut s = self.sh();
@@ -1400,12 +1410,14 @@ impl Engine {
             Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
             Cmd::Dislike(done) => {
                 let Some(track) = self.current.clone() else { return };
-                let remove = self.dislikes.contains(&track.id);
+                let remove = self.dislikes.lock().unwrap().contains(&track.id);
                 self.write_reaction(&track, Reaction::Dislike, remove, done);
                 if !remove { self.advance(End::Dislike); }
             }
-            #[cfg(target_os = "android")]
-            Cmd::DislikeTrack(track) => self.write_reaction(&track, Reaction::Dislike, false, None),
+            Cmd::DislikeTrack(track, done) => {
+                let remove = self.dislikes.lock().unwrap().contains(&track.id);
+                self.write_reaction(&track, Reaction::Dislike, remove, done);
+            }
             Cmd::Wave(src) => self.start_wave(src, true),
             Cmd::TuneWave(settings) => {
                 self.start_wave(Source::Wave, false);
@@ -1508,13 +1520,13 @@ impl Engine {
                 continue;
             }
             match kind {
-                Reaction::Like => { self.dislikes.remove(&id); changed |= likes.insert(id); }
-                Reaction::Dislike => { changed |= likes.remove(&id); self.dislikes.insert(id); }
+                Reaction::Like => { self.dislikes.lock().unwrap().remove(&id); changed |= likes.insert(id); }
+                Reaction::Dislike => { changed |= likes.remove(&id); self.dislikes.lock().unwrap().insert(id); }
             }
         }
         drop(likes);
         if changed { self.likes_changed(); }
-        self.sh().disliked = self.current.as_ref().is_some_and(|t| self.dislikes.contains(&t.id));
+        self.sh().disliked = self.current.as_ref().is_some_and(|t| self.dislikes.lock().unwrap().contains(&t.id));
     }
 
     fn show_reaction(&mut self, id: &str, state: Option<Reaction>) {
@@ -1523,14 +1535,14 @@ impl Engine {
         drop(likes);
         if changed { self.likes_changed(); }
         let disliked = state == Some(Reaction::Dislike);
-        if disliked { self.dislikes.insert(id.to_string()); } else { self.dislikes.remove(id); }
+        if disliked { self.dislikes.lock().unwrap().insert(id.to_string()); } else { self.dislikes.lock().unwrap().remove(id); }
         if self.current.as_ref().is_some_and(|t| t.id == id) { self.sh().disliked = disliked; }
     }
 
     fn write_reaction(&mut self, track: &Track, kind: Reaction, remove: bool, done: Option<LikeCompleted>) {
         let Some(api) = self.api.clone() else { return };
         let old = if self.likes.lock().unwrap().contains(&track.id) { Some(Reaction::Like) }
-            else if self.dislikes.contains(&track.id) { Some(Reaction::Dislike) } else { None };
+            else if self.dislikes.lock().unwrap().contains(&track.id) { Some(Reaction::Dislike) } else { None };
         self.reaction_seq += 1;
         let seq = self.reaction_seq;
         self.reaction_writes.entry(track.id.clone()).or_insert(ReactionWrite {
@@ -1890,7 +1902,7 @@ impl Engine {
         {
             let mut s = self.sh();
             s.track_generation = self.gen;
-            s.disliked = self.dislikes.contains(&t.id);
+            s.disliked = self.dislikes.lock().unwrap().contains(&t.id);
             s.track = Some(t.clone());
             s.position = 0.0;
             s.duration = t.duration_ms as f32 / 1000.0;
@@ -2191,7 +2203,7 @@ mod tests {
     fn seek_keeps_latest_position_until_audio_acknowledges_it() {
         let (tx, rx) = mpsc::channel();
         let mut e = Engine::new(tx.clone(), Default::default(), Default::default(), Arc::new(|| {}), Default::default());
-        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), eq: e.eq.clone() };
+        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), dislikes: e.dislikes.clone(), eq: e.eq.clone() };
         e.loaded = true;
         e.held_pos = Some(10.0);
         e.sh().track = crate::api::parse_track(&serde_json::json!({"id": 1, "title": "seek"}));
@@ -2234,13 +2246,13 @@ mod tests {
         e.cmd(Cmd::Dislike(None));
         e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 1, kind: Reaction::Like, remove: false, result: Ok(()) });
         assert!(!e.likes.lock().unwrap().contains("7"));
-        assert!(e.dislikes.contains("7"));
+        assert!(e.dislikes.lock().unwrap().contains("7"));
         e.handle(Msg::Likes("account".into(), Ok(vec!["7".into()])));
         assert!(!e.likes.lock().unwrap().contains("7"));
         e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 2, kind: Reaction::Dislike,
             remove: false, result: Err("offline".into()) });
         assert!(e.likes.lock().unwrap().contains("7"));
-        assert!(!e.dislikes.contains("7"));
+        assert!(!e.dislikes.lock().unwrap().contains("7"));
     }
 
     #[test]

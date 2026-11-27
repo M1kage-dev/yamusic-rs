@@ -603,6 +603,7 @@ fn menu(b: usize, i: usize) {
         let mut row = prow(&t, None);
         pages.set_menu_track(row.clone());
         pages.set_menu_liked(s.player.is_liked(&t.id));
+        pages.set_menu_disliked(s.player.is_disliked(&t.id));
         pages.set_menu_open(true);
         if let Some(uri) = &t.cover {
             let px = ((80.0 * ui.window().scale_factor()).round() as u32).min(1000);
@@ -644,7 +645,7 @@ fn menu_action(n: i32) {
             }
         }
         7 => open_artists(&t.artist_list),
-        8 => player.send(Cmd::DislikeTrack(t)),
+        8 => player.send(Cmd::DislikeTrack(t, None)),
         9 => crate::download::start(api, "", vec![t]),
         10 => about(&t),
         _ => {}
