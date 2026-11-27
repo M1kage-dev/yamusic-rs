@@ -1410,6 +1410,52 @@ impl Api {
         Ok(cards(&self.get_raw(&format!("/landing/block/{id}/entities?page=0&pageSize=100"))?))
     }
 
+    /// Подкатегория подкастов (`/non-music/category/<id>/albums`): название и подкасты.
+    pub fn nonmusic_category(&self, id: &str) -> Res<(String, Vec<Card>)> {
+        let v = self.get_raw(&format!("/non-music/category/{id}/albums"))?;
+        let ids: Vec<String> = v.get("albums").and_then(|a| a.as_array()).into_iter().flatten().filter_map(|x| s(Some(x))).collect();
+        let mut cards = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(100) {
+            let v = self.get("/albums", &[("album-ids", &chunk.join(","))])?;
+            cards.extend(v.as_array().into_iter().flatten().filter_map(parse_album).map(|a| album_card(&a)));
+        }
+        Ok((str_of(&v, "title"), cards))
+    }
+
+    /// «Моя полка» (`/collection/shelf` оригинала): недавно прослушанное и отложенное.
+    pub fn bookshelf(&self) -> Res<Vec<(String, Vec<Card>)>> {
+        ["recently-played", "liked"]
+            .iter()
+            .map(|part| {
+                let v = self.get_raw(&format!("/non-music/bookshelf/{part}"))?;
+                let cards = v
+                    .get("entities")
+                    .and_then(|e| e.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| parse_album(e.get("album")?))
+                    .map(|a| album_card(&a))
+                    .collect();
+                Ok((str_of(&v, "title"), cards))
+            })
+            .collect()
+    }
+
+    /// «Новые выпуски» с полки: выпуски из блоков `non-music/new-episodes`.
+    pub fn new_episodes(&self) -> Res<(String, Vec<Track>)> {
+        let v = self.get_raw("/non-music/new-episodes")?;
+        let tracks = v
+            .get("blocks")
+            .and_then(|b| b.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|b| b.get("entities")?.as_array())
+            .flatten()
+            .filter_map(|e| parse_track(e.get("track")?))
+            .collect();
+        Ok((str_of(&v, "title"), tracks))
+    }
+
     /// Подборка (`/tag/autumn`): название тега и его плейлисты, как TagPage оригинала —
     /// `tags/{id}/playlist-ids`, затем сами плейлисты `playlists?playlistIds=uid:kind,…`.
     pub fn tag_playlists(&self, id: &str) -> Res<(String, Vec<Card>)> {

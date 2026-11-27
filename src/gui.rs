@@ -755,6 +755,11 @@ impl Ctx {
                     title = Some(t).filter(|t| !t.is_empty());
                     c
                 })),
+                "nm-category" => one(net.api.nonmusic_category(arg).map(|(t, c)| {
+                    title = Some(t).filter(|t| !t.is_empty());
+                    c
+                })),
+                "shelf" => net.api.bookshelf(),
                 "playlists" => net.api.collection_tabs("playlists-liked-and-playlists-created"),
                 "albums" => net.api.collection_tabs("albums-liked-and-albums-presaved"),
                 "label" => (|| {
@@ -3172,9 +3177,13 @@ impl Ctx {
     }
 
     fn open_target(self: &Rc<Self>, target: &str, title: &str) {
-        let (kind, arg) = target.split_once(':').unwrap_or(("", ""));
+        let (kind, arg) = target.split_once(':').unwrap_or((target, ""));
         match kind {
-            "album" | "playlist" => self.navigate(Page::List, Some(target.to_string()), true),
+            "album" | "playlist" | "new-episodes" => self.navigate(Page::List, Some(target.to_string()), true),
+            "shelf" | "nm-category" => {
+                self.st.borrow_mut().grid_titles.entry(target.to_string()).or_insert_with(|| title.to_string());
+                self.navigate(Page::Grid, Some(target.to_string()), true);
+            }
             "artist" => self.navigate(Page::Artist, Some(target.to_string()), true),
             // Подборка — сетка её плейлистов; заголовок, пока грузится, — с карточки.
             "tag" => {

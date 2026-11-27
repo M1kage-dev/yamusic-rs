@@ -607,7 +607,7 @@ impl Ctx {
             return self.open_target(t, &def.title);
         }
         // «Смотреть всё» с лендинга жанров ведёт на лендинг жанра или подборку (`viewAllAction.weblink`).
-        if let Some(t) = def.more_target.as_deref().filter(|t| t.starts_with("landing:") || t.starts_with("tag:")) {
+        if let Some(t) = def.more_target.as_deref().filter(|t| ["landing:", "tag:", "nm-category:"].iter().any(|p| t.starts_with(p))) {
             return self.open_target(t, &def.title);
         }
         // Новые релизы — как у оригинала: «Смотреть всё» берёт их из `entities` блока (до 100, с обложками
