@@ -1652,6 +1652,9 @@ fn after_dpi_change() {
 
 const DONATE_URL: &str = "https://pay.cloudtips.ru/p/befb620d";
 
+/// Картинка блока «Знакомое вам» на странице исполнителя — адрес из FamiliarYou оригинала.
+const FAMILIAR_COVER: &str = "avatars.mds.yandex.net/get-music-misc/2419084/img.65faec7dd0866004f49a38bc/%%";
+
 /// Чат поддержки, как `createSupportChatUrl` оригинала.
 const SUPPORT_CHAT: &str =
     "https://yandex.ru/chat?context=%7B%22entrypoint%22%3A%22web_desktop%22%7D#/user/ee219503-b69b-9484-405b-6877a510e13c";
@@ -3386,6 +3389,15 @@ impl Ctx {
                 } else {
                     String::new()
                 };
+                if !fam.is_empty() && app.get_ar_familiar_cover().size().width == 0 {
+                    let size = self.size_for(58.0);
+                    let weak = self.ui.clone();
+                    self.images.get(&crate::api::pic(FAMILIAR_COVER, size), size, move |img| {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.global::<App>().set_ar_familiar_cover(img.clone());
+                        }
+                    });
+                }
                 app.set_ar_familiar(fam.into());
                 app.set_ar_release(self.card_model("ar-release", a.release.as_slice(), 204.0));
                 app.set_ar_studio(self.card_model("ar-studio", &a.studio, 191.0));
