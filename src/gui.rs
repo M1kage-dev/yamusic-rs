@@ -2074,6 +2074,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     app.set_tracks(ModelRc::from(tracks.clone()));
     app.set_version(env!("CARGO_PKG_VERSION").into());
     app.set_app_name(env!("APP_NAME").into());
+    app.set_repository(env!("CARGO_PKG_REPOSITORY").into());
     app.set_theme_mode(cfg.theme.clone().into());
     app.set_lang(cfg.lang.clone().into());
     ui.global::<T>().set_lang(cfg.lang.clone().into());
@@ -3604,7 +3605,6 @@ impl Ctx {
                 app.set_hidden_blocks(SharedString::new());
                 self.toast("Скрытые блоки снова на главной");
             }
-            "about" => sys::open_url(env!("CARGO_PKG_REPOSITORY")),
             "update-check" => check_updates_now(&ui),
             "releases" => sys::open_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/releases")),
             "donate" => sys::open_url(DONATE_URL),
@@ -5091,6 +5091,7 @@ fn register_extra(app: &App) {
             }
         })
     });
+    app.on_open_url(|url| sys::open_url(&url));
     app.on_open_grid(|block, title| {
         with_ctx(|c| {
             if matches!(block.as_str(), "label-releases" | "label-artists") {
