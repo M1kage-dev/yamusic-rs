@@ -1,15 +1,15 @@
 [package]
 name = "yamusic-rs"
-version = "1.0.11+upstream.1.1.9"
+version = "1.0.12+upstream.1.1.10"
 edition = "2021"
-rust-version = "1.92"
+rust-version = "1.95"
 license = "GPL-3.0-only"
 description = "Яндекс Музыка RS — неофициальный клиент Яндекс Музыки на Rust"
 repository = "https://github.com/M1kage-dev/yamusic-rs"
 
 [dependencies]
-skia-safe = { version = "0.153.3", default-features = false }
-slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-011", "unstable-winit-030"] }
+skia-safe = { version = "0.157.0", default-features = false }
+slint = { version = "1.19", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-012", "unstable-winit-030"] }
 rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
 # Системный прокси намеренно не используем (никакой macos-system-configuration): иначе
 # приложение ходит через любой запущенный отладочный прокси вроде Proxyman, зависит от него
@@ -47,6 +47,7 @@ features = [
   "Win32_UI_Controls_Dialogs",
   "Win32_UI_Shell_Common",
   "Win32_System_Com",
+  "Win32_Globalization",
 ]
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -55,7 +56,7 @@ arboard = { version = "3.7", default-features = false }
 # поэтому в бинаре их две; NSView получаем через raw pointer, версия обёртки на это не влияет.
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSDictionary", "NSValue", "NSData", "NSObject"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSDictionary", "NSValue", "NSData", "NSObject", "NSUserDefaults"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSWindow", "NSScreen", "NSView", "NSResponder", "NSButton", "NSControl", "NSMenu", "NSMenuItem", "NSStatusBar", "NSStatusItem"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-media-player = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "MPRemoteCommandCenter", "MPRemoteCommand", "MPRemoteCommandEvent", "MPNowPlayingInfoCenter", "MPMediaItem", "MPMediaItemCollection", "MPMediaEntity"] }
@@ -88,7 +89,7 @@ futures-lite = "2"
 secret-service = { version = "5.2", default-features = false, features = ["rt-async-io-crypto-rust"] }
 
 [build-dependencies]
-slint-build = "1.18"
+slint-build = "1.19"
 
 [profile.release]
 opt-level = 3

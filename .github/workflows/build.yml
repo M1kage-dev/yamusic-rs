@@ -19,8 +19,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy --release --all-targets -- -D warnings
-      - run: cargo test --release
+      - run: cargo clippy --locked --release --all-targets -- -D warnings
+      - run: cargo test --locked --release
 
   linux:
     runs-on: ubuntu-22.04
@@ -39,8 +39,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy --release --all-targets -- -D warnings
-      - run: cargo test --release
+      - run: cargo clippy --locked --release --all-targets -- -D warnings
+      - run: cargo test --locked --release
 
   # macOS: две архитектуры одним универсальным бинарём. Тесты и clippy — один раз,
   # сборка и упаковка — через tools/macos-app.sh, он же собирает universal через lipo.
@@ -73,16 +73,16 @@ jobs:
       - name: librsvg для значка
         run: brew install librsvg
 
-      - run: cargo clippy --release --all-targets -- -D warnings
-      - run: cargo test --release
+      - run: cargo clippy --locked --release --all-targets -- -D warnings
+      - run: cargo test --locked --release
 
       # Сборка двух срезов отдельно: если что-то зависнет, видно, что именно, а не «шаг идёт час».
       - name: Сборка arm64 и x86_64
         timeout-minutes: 30
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
 
       # Подпись — ad-hoc: для запуска на Apple Silicon её достаточно, а свой сертификат
       # нужен был только ради постоянной личности в связке ключей, от которой мы отказались.

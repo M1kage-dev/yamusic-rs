@@ -283,6 +283,24 @@ pub fn refresh_autostart() {
     }
 }
 
+/// Шаг колёсика из системных настроек: в macOS такой настройки нет, поэтому шаг задаёт
+/// сам Slint (`LINE_PX` в `gui/wheel.rs`), как и было до появления этой ручки в апстриме.
+pub fn wheel_px(_horizontal: bool) -> Option<f32> {
+    None
+}
+
+/// Языки интерфейса из настроек системы (`AppleLanguages`), самые важные первыми:
+/// «ru-RU», «en-US». Так первый запуск берёт тот же язык, что и остальные приложения.
+pub fn preferred_languages() -> Vec<String> {
+    use objc2_foundation::{NSString, NSUserDefaults};
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let key = NSString::from_str("AppleLanguages");
+    let Some(list) = defaults.stringArrayForKey(&key) else {
+        return Vec::new();
+    };
+    list.iter().map(|s| s.to_string()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

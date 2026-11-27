@@ -22,7 +22,7 @@ check(release['if'] == "startsWith(github.ref, 'refs/tags/v')", 'release must be
   check(config['runs-on'] == runner, "#{job}: expected an x64 runner")
   steps = config.fetch('steps')
   commands = steps.map { |step| step['run'] }.compact.reject { |run| run.start_with?('sudo apt-get ') }
-  check(commands.sort == ['cargo clippy --release --all-targets -- -D warnings', 'cargo test --release'],
+  check(commands.sort == ['cargo clippy --locked --release --all-targets -- -D warnings', 'cargo test --locked --release'],
         "#{job}: expected only clippy and tests after setup")
 end
 
