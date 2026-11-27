@@ -291,7 +291,7 @@ export component AlbumTrackRow inherits Rectangle {
     callback like();
     height: 56px;
     border-radius: Theme.radius-size-m;
-    in property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover;
+    in property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover || title-ta.has-hover;
     background: current || hot ? Theme.controls-color-secondary-default-disabled : transparent;
     ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.play(); } }
     if hot || current: Icon {
@@ -321,6 +321,18 @@ export component AlbumTrackRow inherits Rectangle {
             font-size: Theme.font-size-label-m;
             font-weight: 500;
             color: current ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
+            if title-ta.has-hover: Rectangle {
+                x: 0;
+                y: (parent.height + parent.font-size) / 2 + 1px;
+                width: min(parent.width, parent.preferred-width);
+                height: 1px;
+                background: parent.color;
+            }
+            // Название открывает карточку трека справа, как в оригинале (#189).
+            title-ta := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { App.row-open-track(root.block, root.index); }
+            }
         }
         if item.version != "": Text {
             text: item.version;

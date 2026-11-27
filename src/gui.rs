@@ -7,6 +7,7 @@ mod keys;
 mod landing_ui;
 mod playlist_cards;
 mod track_about;
+mod track_card;
 mod wheel;
 
 use crate::save::{file_name_max, save_track, saved_already};
@@ -1101,6 +1102,7 @@ impl Ctx {
                         }
                     }
                     self.show_list_header(l);
+                    self.track_card_list_loaded(l);
                     self.apply_filter();
                 }
             }
@@ -5066,6 +5068,7 @@ impl Ctx {
             "chart" => self.st.borrow().chart.get(i).cloned(),
             "results" => self.st.borrow().results.get(i).cloned(),
             "history" => self.history_track(i),
+            "track-card" => self.track_card_similar(i),
             "likes-preview" => {
                 let data = self.collection()?;
                 let Data::Collection(c) = &*data else { return None };
@@ -5370,9 +5373,12 @@ fn register_extra(app: &App) {
     app.on_jump_queue(|i| with_ctx(|c| c.player.send(Cmd::Jump(i.max(0) as usize))));
     app.on_open_current_album(|| {
         with_ctx(|c| {
-            if let Some(a) = c.player.state().track.and_then(|t| t.album_id) {
+            // Как у оригинала: страница альбома и справа карточка играющего трека (#188).
+            let Some(t) = c.player.state().track else { return };
+            if let Some(a) = t.album_id.clone() {
                 c.ui().global::<App>().set_fullscreen(false);
                 c.navigate(Page::List, Some(format!("album:{a}")), true);
+                c.open_track_card(t);
             }
         })
     });
@@ -5642,6 +5648,22 @@ fn register_extra(app: &App) {
             c.st.borrow_mut().tune_seeds.clear();
             c.player.send(Cmd::Wave(Source::Wave));
             c.start();
+        })
+    });
+    app.on_row_open_track(|block, i| {
+        with_ctx(|c| {
+            if let Some(t) = c.row_track(&block, i.max(0) as usize) {
+                c.open_track_card(t);
+            }
+        })
+    });
+    app.on_track_card_action(|action| with_ctx(|c| c.track_card_action(&action)));
+    app.on_track_card_row(|i, like| with_ctx(|c| c.track_card_row(i.max(0) as usize, like)));
+    app.on_track_card_menu(|x, y| {
+        with_ctx(|c| {
+            if let Some(t) = c.track_card_track() {
+                c.open_menu_for(t, x, y, true);
+            }
         })
     });
     app.on_row_open_album(|block, i| {

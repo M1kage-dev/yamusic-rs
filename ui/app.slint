@@ -16,6 +16,7 @@ import { FullscreenPlayer } from "fullscreen.slint";
 import { TrackMenu, SoundSettings } from "popups.slint";
 import { ShortcutsModal, OverviewModal, AboutModal } from "modals.slint";
 import { TrackAboutModal } from "track_about.slint";
+import { TrackCard } from "track_card.slint";
 import { T, App, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry, InfoLine, PlaylistCardAction, PlaylistCardState } from "state.slint";
 import { LandingPage, ChartPage } from "landing.slint";
 import { HistoryPage } from "history.slint";
@@ -261,6 +262,16 @@ export component AppWindow inherits Window {
             rise: 8px;
             TrackAboutModal { height: parent.height; }
         }
+    }
+
+    // Карточка трека — там же, где «О треке», но без подложки: страницу под ней можно листать.
+    if App.track-card-open && !App.fullscreen: Fade {
+        x: content.x + content.width - self.width - Theme.spacer-size-m;
+        y: content.y + Theme.spacer-size-m;
+        width: 430px;
+        height: max(0px, content.height - 2 * Theme.spacer-size-m);
+        rise: 8px;
+        TrackCard { height: parent.height; }
     }
 
     // «Горячие клавиши»: по центру на затемнённой подложке, клик мимо закрывает.

@@ -559,6 +559,21 @@ export global App {
 
     // Окно «О треке».
     in-out property <bool> track-about-open;
+    // Карточка трека справа: клик по названию трека в альбоме (#189).
+    in-out property <bool> track-card-open;
+    in property <string> track-card-title;
+    in property <string> track-card-artists;
+    in property <bool> track-card-liked;
+    in property <string> track-card-album;
+    in property <string> track-card-album-sub;
+    in property <image> track-card-album-cover;
+    in property <[string]> track-card-lyrics;
+    in property <[string]> track-card-lyrics-preview;
+    in property <[TrackItem]> track-card-similar;
+    callback track-card-action(string);
+    callback track-card-menu(length, length);
+    callback track-card-row(int, bool);
+    callback row-open-track(string, int);
     in property <string> track-about-title;
     in property <string> track-about-version;
     in property <bool> track-about-explicit;
