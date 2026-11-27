@@ -1192,6 +1192,11 @@ impl Ctx {
                 }
             }
         }
+        match self.st.borrow().list_key.as_deref() {
+            Some("dislikes") => app.set_list_kind("dislikes".into()),
+            Some("new-episodes") => app.set_list_kind("plain".into()),
+            _ => {}
+        }
         app.set_list_title(l.title.clone().into());
         if l.playlist.is_some() && self.st.borrow().rename_key.is_some() && self.st.borrow().rename_key == self.st.borrow().list_key {
             self.st.borrow_mut().rename_key = None;
