@@ -2093,6 +2093,7 @@ pub fn run(start_hidden: bool) -> Result<(), slint::PlatformError> {
     let app = ui.global::<App>();
     app.set_tracks(ModelRc::from(tracks.clone()));
     app.set_version(env!("CARGO_PKG_VERSION").into());
+    app.set_donate_shown(cfg.donate_hidden != env!("CARGO_PKG_VERSION"));
     app.set_app_name(env!("APP_NAME").into());
     app.set_repository(env!("CARGO_PKG_REPOSITORY").into());
     app.set_theme_mode(cfg.theme.clone().into());
@@ -3629,6 +3630,12 @@ impl Ctx {
             "update-check" => check_updates_now(&ui),
             "releases" => sys::open_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/releases")),
             "donate" => sys::open_url(DONATE_URL),
+            "donate-hide" => {
+                app.set_donate_shown(false);
+                let mut st = self.st.borrow_mut();
+                st.cfg.donate_hidden = env!("CARGO_PKG_VERSION").into();
+                st.cfg.save();
+            }
             "discord" => {
                 let on = !app.get_discord_on();
                 app.set_discord_on(on);

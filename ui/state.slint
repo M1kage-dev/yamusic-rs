@@ -250,6 +250,8 @@ export global App {
     callback shortcuts-reset();
     // Окно «О приложении»; ссылки из него открываются в браузере.
     in-out property <bool> about-open;
+    // Карточка доната в настройках; крестик прячет её до следующей версии.
+    in property <bool> donate-shown: true;
     in property <string> repository;
     callback open-url(string);
     // У поля ввода (`Field`) фокус и где это поле: горячие клавиши в это время не работают,

@@ -29,6 +29,8 @@ pub struct Config {
     pub volume: f32,
     pub discord_enabled: bool,
     pub discord_app_id: String,
+    /// Версия RS, в которой спрятали карточку доната: в следующей она снова видна.
+    pub donate_hidden: String,
     /// system / light / dark
     pub theme: String,
     /// 0 превосходное, 1 оптимальное, 2 экономичное
@@ -90,6 +92,7 @@ impl Default for Config {
             volume: 0.6,
             discord_enabled: true,
             discord_app_id: String::new(),
+            donate_hidden: String::new(),
             theme: "system".into(),
             quality: 0,
             eq_on: false,
