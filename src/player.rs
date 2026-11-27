@@ -492,6 +492,8 @@ struct Engine {
     source: Source,
     list: Option<ListPlay>,
     queue: VecDeque<Track>,
+    /// Сколько треков в начале очереди вернулось туда по «назад»: пропуск в волне их не сбрасывает.
+    returned: usize,
     history: Vec<Track>,
     current: Option<Track>,
     current_buf: Option<Arc<Buf>>,
@@ -588,6 +590,7 @@ impl Engine {
             source: Source::Wave,
             list: None,
             queue: VecDeque::new(),
+            returned: 0,
             history: Vec::new(),
             current: None,
             current_buf: None,
@@ -1032,6 +1035,7 @@ impl Engine {
     fn clear_queue(&mut self) {
         self.flush_feedback();
         self.queue.clear();
+        self.returned = 0;
         self.prefetch = None;
         self.prefetching = None;
         self.fetching = false;
@@ -1633,6 +1637,7 @@ impl Engine {
         self.merge_reactions(b.liked, Reaction::Like);
         if replace {
             self.queue.clear();
+            self.returned = 0;
             self.prefetch = None;
         }
         // Пакет берётся как есть, как у оригинала: сервер сам решает, что повторить.
@@ -1687,7 +1692,11 @@ impl Engine {
         if self.list.is_some() || self.source.station().is_none() || self.session.is_empty() {
             return;
         }
+        let back: Vec<Track> = self.queue.drain(..self.returned.min(self.queue.len())).collect();
         self.queue.retain(|t| t.batch_id.is_empty());
+        for t in back.into_iter().rev() {
+            self.queue.push_front(t);
+        }
         if let Some((id, _)) = &self.prefetch {
             if !self.queue.iter().any(|t| t.id == *id) {
                 self.prefetch = None;
@@ -1818,6 +1827,7 @@ impl Engine {
         if !crate::api::allow_explicit() {
             self.queue.retain(|t| !t.explicit);
         }
+        self.returned = self.returned.saturating_sub(1);
         match self.queue.pop_front() {
             Some(t) => {
                 self.current = Some(t);
@@ -1853,6 +1863,7 @@ impl Engine {
             self.end_current(Some("skip"), false, "back_skip");
             if let Some(c) = self.current.take() {
                 self.queue.push_front(c);
+                self.returned += 1;
             }
             self.stop_audio();
             self.current = Some(p);
@@ -2135,6 +2146,22 @@ mod tests {
         assert_eq!(account_retry_delay(1), Duration::from_secs(2));
         assert_eq!(account_retry_delay(5), Duration::from_secs(30));
         assert_eq!(account_retry_delay(9), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn wave_skip_keeps_tracks_returned_by_back() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let t = |id: u32| {
+            let mut t = crate::api::parse_track(&serde_json::json!({"id": id, "title": "t"})).unwrap();
+            t.batch_id = "b".into();
+            t
+        };
+        e.session = "s".into();
+        e.queue = VecDeque::from([t(2), t(3), t(9)]);
+        e.returned = 2;
+        e.play_from_queue();
+        e.refresh_wave();
+        assert_eq!(e.queue.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["3"]);
     }
 
     #[test]
